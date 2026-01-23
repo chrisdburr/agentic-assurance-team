@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "memory-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory",
+        "--memory-path",
+        "./.agents/memory"
+      ],
+      "env": {}
+    },
+    "team": {
+      "type": "stdio",
+      "command": "bun",
+      "args": ["run", "./team-server/src/index.ts", "--mcp"],
+      "env": {
+        "DB_PATH": "./.agents/team.db",
+        "WEB_PORT": "3030"
+      }
+    }
+  }
+}

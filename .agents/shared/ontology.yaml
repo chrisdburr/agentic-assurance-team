@@ -1,0 +1,75 @@
+# Shared Ontology for AI Assurance Research
+# This file defines shared vocabulary to prevent inter-agent misalignment.
+# Each term has an owner responsible for its definition and evolution.
+
+domain: AI Assurance Research
+
+version: "1.0"
+last_updated: "2026-01-23"
+
+terms:
+  epistemic_confidence:
+    definition: "Degree of justified belief in a claim, based on available evidence and valid reasoning"
+    owner: alice
+    related: [uncertainty, calibration, justified_belief]
+    examples:
+      - "High epistemic confidence in a model's prediction requires both accuracy and proper uncertainty quantification"
+    notes: "Distinct from psychological confidence (subjective feeling) - epistemic confidence is normative"
+
+  model_uncertainty:
+    definition: "Quantified measure of a model's uncertainty in its predictions, decomposable into epistemic and aleatoric components"
+    owner: bob
+    related: [epistemic_confidence, aleatoric_uncertainty, calibration]
+    examples:
+      - "Bayesian neural networks provide model uncertainty through posterior predictive distributions"
+    notes: "Epistemic uncertainty (model doesn't know) vs aleatoric uncertainty (inherent randomness)"
+
+  user_trust:
+    definition: "User's willingness to rely on system recommendations when making decisions"
+    owner: charlie
+    related: [epistemic_confidence, perceived_reliability, appropriate_reliance]
+    examples:
+      - "Calibrated trust means user reliance matches actual system reliability"
+    notes: "Trust can be miscalibrated - either over-trust (automation bias) or under-trust (algorithm aversion)"
+
+  calibration:
+    definition: "Alignment between stated confidence/probability and actual accuracy or reliability"
+    owner: bob
+    related: [epistemic_confidence, model_uncertainty, user_trust]
+    examples:
+      - "A calibrated model's 80% confidence predictions are correct 80% of the time"
+    notes: "Applies to both ML models and human judgment"
+
+  explainability:
+    definition: "Property of a system that allows humans to understand how and why it produces particular outputs"
+    owner: alice
+    related: [interpretability, transparency, user_trust]
+    examples:
+      - "Feature attribution methods provide local explainability for individual predictions"
+    notes: "Explainability is relational - explanations must be appropriate for the target audience"
+
+  appropriate_reliance:
+    definition: "Pattern of user behavior where reliance on AI recommendations matches the system's actual capabilities"
+    owner: charlie
+    related: [user_trust, automation_bias, algorithm_aversion]
+    examples:
+      - "Users with appropriate reliance accept correct AI recommendations and reject incorrect ones"
+    notes: "Goal of AI assurance is to support appropriate reliance, not maximize trust"
+
+  assurance_case:
+    definition: "Structured argument that a system satisfies specified requirements, with supporting evidence"
+    owner: alice
+    related: [epistemic_confidence, evidence, argument_structure]
+    examples:
+      - "Safety cases in aviation use Goal Structuring Notation to document assurance arguments"
+    notes: "Assurance cases make implicit assumptions explicit and traceable"
+
+# Cross-cutting concepts that span multiple owners
+cross_cutting:
+  - term: evidence
+    definition: "Information that bears on the truth or falsity of claims"
+    stakeholders: [alice, bob, charlie]
+
+  - term: risk
+    definition: "Potential for negative outcomes, characterized by likelihood and severity"
+    stakeholders: [alice, bob, charlie]
