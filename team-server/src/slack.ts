@@ -15,12 +15,18 @@ const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN; // For Socket Mode
 const TEAM_SERVER_URL = process.env.TEAM_SERVER_URL || "http://localhost:3030";
 
-// Channel-to-agent mapping
+// Channel-to-agent mapping (by name)
 const CHANNEL_AGENT_MAP: Record<string, string> = {
   "alice": "alice",
   "bob": "bob",
   "charlie": "charlie",
   "team": "team",
+};
+
+// Channel ID to agent mapping (bypasses API lookup)
+// Add channel IDs here as: "C0XXXXXXXX": "agent_name"
+const CHANNEL_ID_MAP: Record<string, string> = {
+  "C0AAJQ0Q4BC": "alice",
 };
 
 // Track last processed message timestamp to avoid duplicates
@@ -71,6 +77,7 @@ export async function postToSlack(channel: string, text: string): Promise<void> 
     return;
   }
 
+  console.log(`[Slack] Attempting to post to #${channel}: ${text.substring(0, 50)}...`);
   try {
     await slackApi("chat.postMessage", {
       channel: `#${channel}`,
@@ -103,15 +110,19 @@ export async function handleSlackMessage(message: SlackMessage): Promise<void> {
     return;
   }
 
-  // Get channel name
-  const channelName = await getChannelName(message.channel);
-  if (!channelName) {
-    console.error(`[Slack] Could not resolve channel ${message.channel}`);
-    return;
-  }
+  // Try direct channel ID mapping first (faster, no API call)
+  let toAgent = CHANNEL_ID_MAP[message.channel];
 
-  // Map channel to agent
-  const toAgent = CHANNEL_AGENT_MAP[channelName];
+  if (!toAgent) {
+    // Fall back to API lookup
+    const channelName = await getChannelName(message.channel);
+    if (!channelName) {
+      console.error(`[Slack] Could not resolve channel ${message.channel}`);
+      console.log(`[Slack] Add this to CHANNEL_ID_MAP: "${message.channel}": "agent_name"`);
+      return;
+    }
+    toAgent = CHANNEL_AGENT_MAP[channelName];
+  }
   if (!toAgent) {
     console.log(`[Slack] Ignoring message from unmapped channel #${channelName}`);
     return;

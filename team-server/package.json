@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
-    "start": "bun run src/index.ts",
-    "mcp": "bun run src/index.ts --mcp"
+    "dev": "bun run --env-file=../.env --watch src/index.ts",
+    "start": "bun run --env-file=../.env src/index.ts",
+    "mcp": "bun run --env-file=../.env src/index.ts --mcp"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
