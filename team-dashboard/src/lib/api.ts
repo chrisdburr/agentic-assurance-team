@@ -1,93 +1,54 @@
-// Types matching the team-server schema
-export interface Message {
-  id: string;
-  from_agent: string;
-  to_agent: string;
-  content: string;
-  thread_id: string | null;
-  timestamp: string;
-  read_by: string[];
-}
+import type { Message, AgentStatus, RosterEntry, MessageFilter } from "@/types";
 
-export interface Standup {
-  id: string;
-  agent_id: string;
-  date: string;
-  content: string;
-  timestamp: string;
-  session_id: string | null;
-}
+const API_BASE = "/api/backend";
 
-export interface Status {
-  agent_id: string;
-  status: string;
-  working_on: string | null;
-  beads_id: string | null;
-  updated_at: string;
-}
+// Fetch messages with optional filters
+export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> {
+  const params = new URLSearchParams();
+  if (filter?.to_agent) params.set("to_agent", filter.to_agent);
+  if (filter?.from_agent) params.set("from_agent", filter.from_agent);
+  if (filter?.limit) params.set("limit", String(filter.limit));
+  if (filter?.offset) params.set("offset", String(filter.offset));
 
-export interface TeamMember {
-  id: string;
-  name: string;
-  role: string;
-  expertise: string;
-}
-
-// API functions
-export async function fetchMessages(): Promise<Message[]> {
-  const res = await fetch("/api/messages");
-  const data = await res.json();
-  return data.messages || [];
-}
-
-export async function fetchStandups(date?: string): Promise<Standup[]> {
-  const url = date ? `/api/standups/${date}` : "/api/standups";
+  const url = `${API_BASE}/messages${params.toString() ? `?${params}` : ""}`;
   const res = await fetch(url);
-  const data = await res.json();
-  return data.standups || [];
+  if (!res.ok) throw new Error("Failed to fetch messages");
+  return res.json();
 }
 
-export async function fetchStatus(): Promise<Status[]> {
-  const res = await fetch("/api/status");
-  const data = await res.json();
-  return data.team || [];
+// Fetch messages for a channel (to_agent = channel name)
+export async function fetchChannelMessages(channel: string): Promise<Message[]> {
+  return fetchMessages({ to_agent: channel });
 }
 
-export async function fetchRoster(): Promise<TeamMember[]> {
-  const res = await fetch("/api/roster");
-  const data = await res.json();
-  return data.members || [];
+// Fetch DM messages (conversation between user and agent)
+export async function fetchDMMessages(agent: string): Promise<Message[]> {
+  // Get messages to and from the agent
+  const [toAgent, fromAgent] = await Promise.all([
+    fetchMessages({ to_agent: agent }),
+    fetchMessages({ from_agent: agent }),
+  ]);
+
+  // Merge and sort by timestamp
+  const all = [...toAgent, ...fromAgent];
+  const unique = Array.from(new Map(all.map((m) => [m.id, m])).values());
+  return unique.sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
 }
 
-// WebSocket connection
-export function createWebSocket(
-  onMessage: (event: string, data: unknown) => void,
-  onOpen?: () => void,
-  onClose?: () => void
-): WebSocket {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+// Fetch dispatcher status
+export async function fetchDispatcherStatus(): Promise<{
+  agents: AgentStatus[];
+}> {
+  const res = await fetch(`${API_BASE}/dispatcher/status`);
+  if (!res.ok) throw new Error("Failed to fetch dispatcher status");
+  return res.json();
+}
 
-  ws.onmessage = (event) => {
-    try {
-      const { event: eventType, data } = JSON.parse(event.data);
-      onMessage(eventType, data);
-    } catch (e) {
-      console.error("Failed to parse WebSocket message:", e);
-    }
-  };
-
-  ws.onopen = () => {
-    console.log("WebSocket connected");
-    onOpen?.();
-  };
-
-  ws.onclose = () => {
-    console.log("WebSocket disconnected");
-    onClose?.();
-    // Reconnect after 3 seconds
-    setTimeout(() => createWebSocket(onMessage, onOpen, onClose), 3000);
-  };
-
-  return ws;
+// Fetch team roster
+export async function fetchRoster(): Promise<RosterEntry[]> {
+  const res = await fetch(`${API_BASE}/roster`);
+  if (!res.ok) throw new Error("Failed to fetch roster");
+  return res.json();
 }
