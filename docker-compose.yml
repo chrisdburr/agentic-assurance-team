@@ -8,9 +8,9 @@ services:
       # Docker provider
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
-      # Entrypoints (use 8081 if 80 is taken)
-      - "--entrypoints.web.address=:8081"
-      - "--entrypoints.websecure.address=:8443"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
       # Uncomment for Let's Encrypt (requires DOMAIN env var)
       # - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
       # - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
@@ -19,7 +19,7 @@ services:
     # No host ports - access via Cloudflare Tunnel only
     # Uncomment for local access:
     # ports:
-    #   - "8081:8081"  # HTTP
+    #   - "80:80"    # HTTP
     #   - "8080:8080"  # Traefik dashboard
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
