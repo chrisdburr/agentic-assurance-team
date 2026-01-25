@@ -28,52 +28,24 @@ services:
       - team-network
     restart: unless-stopped
 
-  team-server:
-    build: ./team-server
-    volumes:
-      - team-data:/.agents
-    environment:
-      - WEB_PORT=3030
-      - DB_PATH=/.agents/team.db
-      - DISPATCHER_ENABLED=false
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3030/api/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-    labels:
-      - "traefik.enable=true"
-      # API routes
-      - "traefik.http.routers.api.rule=PathPrefix(`/api`)"
-      - "traefik.http.routers.api.entrypoints=web"
-      - "traefik.http.routers.api.service=team-server"
-      # WebSocket route
-      - "traefik.http.routers.ws.rule=Path(`/ws`)"
-      - "traefik.http.routers.ws.entrypoints=web"
-      - "traefik.http.routers.ws.service=team-server"
-      # Service definition
-      - "traefik.http.services.team-server.loadbalancer.server.port=3030"
-    networks:
-      - team-network
-    restart: unless-stopped
+  # team-server now runs on host for Claude CLI access
+  # Start it with: cd team-server && WEB_PORT=3030 DISPATCHER_ENABLED=true bun run src/index.ts
 
   team-dashboard:
     build:
       context: ./team-dashboard
       args:
-        TEAM_SERVER_URL: http://team-server:3030
+        TEAM_SERVER_URL: http://host.docker.internal:3030
     environment:
-      - TEAM_SERVER_URL=http://team-server:3030
+      - TEAM_SERVER_URL=http://host.docker.internal:3030
       - AUTH_USERNAME=${AUTH_USERNAME:-admin}
       - AUTH_PASSWORD=${AUTH_PASSWORD:-teamchat2024}
       - AUTH_TRUST_HOST=true
       - AUTH_SECRET=FnVG/qcs9h4MRzkb7h4CtRQWJcY84z8u3gLYKyvL9Pk=
       - AUTH_URL=https://chat.chrisdburr.com
       - NEXTAUTH_URL=https://chat.chrisdburr.com
-    depends_on:
-      team-server:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/login"]
       interval: 30s
@@ -82,16 +54,10 @@ services:
       start_period: 10s
     labels:
       - "traefik.enable=true"
-      # Auth routes (higher priority than backend /api)
-      - "traefik.http.routers.auth.rule=PathPrefix(`/api/auth`)"
-      - "traefik.http.routers.auth.entrypoints=web"
-      - "traefik.http.routers.auth.service=team-dashboard"
-      - "traefik.http.routers.auth.priority=100"
-      # Catch-all route (lower priority than /api and /ws)
+      # All routes go to dashboard (it proxies /api to host team-server)
       - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
       - "traefik.http.routers.frontend.entrypoints=web"
       - "traefik.http.routers.frontend.service=team-dashboard"
-      - "traefik.http.routers.frontend.priority=1"
       # Service definition
       - "traefik.http.services.team-dashboard.loadbalancer.server.port=3000"
     networks:

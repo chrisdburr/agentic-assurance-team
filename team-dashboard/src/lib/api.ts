@@ -1,8 +1,7 @@
 import type { Message, AgentStatus, RosterEntry, MessageFilter, MonitoringData } from "@/types";
 
-// In production (Docker with Traefik), /api routes directly to team-server
-// In development, Next.js rewrites /api to the backend
-const API_BASE = "/api";
+// Next.js rewrites /api/backend/* to team-server
+const API_BASE = "/api/backend";
 
 // Fetch messages with optional filters
 export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> {
