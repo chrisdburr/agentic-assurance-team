@@ -1,0 +1,14 @@
+http:
+  routers:
+    websocket:
+      rule: "Path(`/ws`)"
+      entryPoints:
+        - web
+      service: team-server-host
+      priority: 100
+
+  services:
+    team-server-host:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:3030"
