@@ -1,8 +1,34 @@
 services:
+  traefik:
+    image: traefik:v3.6
+    command:
+      # API and dashboard
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      # Entrypoints (use 8081 if 80 is taken)
+      - "--entrypoints.web.address=:8081"
+      - "--entrypoints.websecure.address=:8443"
+      # Uncomment for Let's Encrypt (requires DOMAIN env var)
+      # - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      # - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}"
+      # - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "8081:8081"  # HTTP (use 80:80 if available)
+      - "8443:8443"  # HTTPS (use 443:443 if available)
+      - "8080:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - team-network
+    restart: unless-stopped
+
   team-server:
     build: ./team-server
-    ports:
-      - "3030:3030"
     volumes:
       - team-data:/.agents
     environment:
@@ -15,25 +41,55 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+    labels:
+      - "traefik.enable=true"
+      # API routes
+      - "traefik.http.routers.api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.routers.api.service=team-server"
+      # WebSocket route
+      - "traefik.http.routers.ws.rule=Path(`/ws`)"
+      - "traefik.http.routers.ws.entrypoints=web"
+      - "traefik.http.routers.ws.service=team-server"
+      # Service definition
+      - "traefik.http.services.team-server.loadbalancer.server.port=3030"
+    networks:
+      - team-network
+    restart: unless-stopped
 
   team-dashboard:
     build:
       context: ./team-dashboard
       args:
         TEAM_SERVER_URL: http://team-server:3030
-    ports:
-      - "3000:3000"
     environment:
       - TEAM_SERVER_URL=http://team-server:3030
     depends_on:
       team-server:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/login"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/login"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      # Catch-all route (lower priority than /api and /ws)
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.service=team-dashboard"
+      - "traefik.http.routers.frontend.priority=1"
+      # Service definition
+      - "traefik.http.services.team-dashboard.loadbalancer.server.port=3000"
+    networks:
+      - team-network
+    restart: unless-stopped
+
+networks:
+  team-network:
+    driver: bridge
 
 volumes:
   team-data:
+  traefik-certs:
