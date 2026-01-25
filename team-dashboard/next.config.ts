@@ -11,6 +11,7 @@ const withPWA = withPWAInit({
 const nextConfig: NextConfig = {
   // Use webpack for build (required for next-pwa)
   turbopack: {},
+  output: "standalone",
   async rewrites() {
     return [
       {
