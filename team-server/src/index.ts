@@ -29,6 +29,11 @@ import {
   getSlackStatus,
   notifyBeadsEvent,
 } from "./slack.js";
+import {
+  initDispatcher,
+  getDispatcherStatus,
+  manualTrigger,
+} from "./dispatcher.js";
 
 const WEB_PORT = parseInt(process.env.WEB_PORT || "3030");
 const isMcpMode = process.argv.includes("--mcp");
@@ -183,6 +188,20 @@ function runHttpServer() {
     return c.json(getSlackStatus());
   });
 
+  // Dispatcher endpoints
+  app.get("/api/dispatcher/status", (c) => {
+    return c.json(getDispatcherStatus());
+  });
+
+  app.post("/api/dispatcher/trigger/:agent", async (c) => {
+    const agent = c.req.param("agent");
+    const result = await manualTrigger(agent);
+    if (!result.success) {
+      return c.json(result, 400);
+    }
+    return c.json(result);
+  });
+
   // Beads notification endpoint (for Slack integration)
   app.post("/api/beads/notify", async (c) => {
     try {
@@ -275,6 +294,9 @@ function runHttpServer() {
 
   // Initialize Slack bot if configured
   initSlackBot(broadcast);
+
+  // Initialize agent dispatcher
+  initDispatcher(broadcast);
 }
 
 // Main entry point
