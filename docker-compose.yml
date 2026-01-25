@@ -86,6 +86,19 @@ services:
       - team-network
     restart: unless-stopped
 
+  # Cloudflare Tunnel - exposes app publicly without port forwarding
+  # Set CLOUDFLARE_TUNNEL_TOKEN in .env or environment
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - team-network
+    depends_on:
+      - traefik
+    restart: unless-stopped
+
 networks:
   team-network:
     driver: bridge
