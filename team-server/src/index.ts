@@ -16,6 +16,7 @@ import {
   getTeamStatus,
   getTeamRoster,
   getUnreadMessages,
+  sendMessage,
 } from "./db.js";
 import {
   setBroadcast,
@@ -133,6 +134,42 @@ function runHttpServer() {
     const limit = parseInt(c.req.query("limit") || "100");
     const messages = getAllMessages(limit);
     return c.json({ messages });
+  });
+
+  // POST /api/messages - Send a new message
+  app.post("/api/messages", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { to, content, from, thread_id } = body;
+
+      // Validation
+      if (!to || typeof to !== "string") {
+        return c.json({ success: false, error: "Missing or invalid 'to' field" }, 400);
+      }
+      if (!content || typeof content !== "string" || !content.trim()) {
+        return c.json({ success: false, error: "Missing or invalid 'content' field" }, 400);
+      }
+
+      const fromAgent = from || "user";
+      const messageId = sendMessage(fromAgent, to, content, thread_id);
+
+      const result = {
+        success: true,
+        message_id: messageId,
+        from: fromAgent,
+        to,
+        thread_id: thread_id || messageId,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Broadcast to WebSocket clients
+      broadcast("message", result);
+
+      return c.json(result, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ success: false, error: message }, 500);
+    }
   });
 
   // Unread messages endpoint for stop hook (must come before :threadId route)

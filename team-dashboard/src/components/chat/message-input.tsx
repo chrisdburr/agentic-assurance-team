@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { sendMessage } from "@/lib/api";
 
 interface MessageInputProps {
   channel?: string;
@@ -12,15 +13,24 @@ interface MessageInputProps {
 
 export function MessageInput({ channel, agent }: MessageInputProps) {
   const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
 
-  // Note: Sending messages is out of scope for MVP (needs POST endpoint)
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!message.trim()) return;
+    if (!message.trim() || sending) return;
 
-    // TODO: Implement message sending when POST endpoint is available
-    console.log("Would send:", { channel, agent, message });
-    setMessage("");
+    const to = channel || agent;
+    if (!to) return;
+
+    setSending(true);
+    try {
+      await sendMessage(to, message.trim());
+      setMessage("");
+    } catch (error) {
+      console.error("Failed to send message:", error);
+    } finally {
+      setSending(false);
+    }
   };
 
   const placeholder = channel
@@ -37,15 +47,12 @@ export function MessageInput({ channel, agent }: MessageInputProps) {
           onChange={(e) => setMessage(e.target.value)}
           placeholder={placeholder}
           className="flex-1"
-          disabled // Disabled until POST endpoint is available
+          disabled={sending}
         />
-        <Button type="submit" size="icon" disabled>
+        <Button type="submit" size="icon" disabled={sending || !message.trim()}>
           <Send className="h-4 w-4" />
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground mt-1">
-        Message sending coming soon
-      </p>
     </form>
   );
 }

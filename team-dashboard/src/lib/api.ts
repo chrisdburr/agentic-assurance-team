@@ -54,3 +54,21 @@ export async function fetchRoster(): Promise<RosterEntry[]> {
   if (!res.ok) throw new Error("Failed to fetch roster");
   return res.json();
 }
+
+// Send a new message
+export async function sendMessage(
+  to: string,
+  content: string,
+  threadId?: string
+): Promise<{ success: boolean; message_id: string; thread_id: string }> {
+  const res = await fetch(`${API_BASE}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to, content, thread_id: threadId }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: "Failed to send message" }));
+    throw new Error(error.error || "Failed to send message");
+  }
+  return res.json();
+}
