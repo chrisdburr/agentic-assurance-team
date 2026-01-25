@@ -42,7 +42,7 @@ export function MessageInput({ channel, agent, onSend }: MessageInputProps) {
       : "Type a message...";
 
   return (
-    <form onSubmit={handleSubmit} className="border-t p-4">
+    <form onSubmit={handleSubmit} className="border-t px-6 py-4">
       {error && (
         <div className="text-sm text-red-500 mb-2">{error}</div>
       )}

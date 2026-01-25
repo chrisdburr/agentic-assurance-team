@@ -87,11 +87,11 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
 
   return (
     <div className="flex flex-1 flex-col h-full">
-      <div className="border-b px-4 py-2">
+      <div className="border-b px-6 py-3">
         <h2 className="text-lg font-semibold">{title}</h2>
       </div>
 
-      <ScrollArea ref={scrollRef} className="flex-1 p-4">
+      <ScrollArea ref={scrollRef} className="flex-1 px-6 py-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-32">
             <span className="text-muted-foreground">Loading messages...</span>
