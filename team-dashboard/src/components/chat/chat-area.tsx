@@ -28,15 +28,16 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const key = channel ? `channel:${channel}` : `dm:${agent}`;
 
+  // Subscribe to WebSocket events
+  const { lastMessage, isConnected } = useWebSocket();
+
+  // Use polling fallback (5s) when WebSocket is disconnected
   const { data: messages = [], mutate, isLoading } = useSWR(key, fetcher, {
-    refreshInterval: 0, // We'll use WebSocket for updates
-    revalidateOnFocus: false,
+    refreshInterval: isConnected ? 0 : 5000,
+    revalidateOnFocus: true,
   });
 
-  // Subscribe to WebSocket events
-  const { lastMessage } = useWebSocket();
-
-  // Refresh when we get a new message
+  // Refresh when we get a new WebSocket message
   useEffect(() => {
     if (lastMessage?.type === "message") {
       mutate();
