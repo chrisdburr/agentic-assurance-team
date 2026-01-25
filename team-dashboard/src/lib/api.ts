@@ -26,14 +26,20 @@ export async function fetchChannelMessages(channel: string): Promise<Message[]> 
 
 // Fetch DM messages (conversation between user and agent)
 export async function fetchDMMessages(agent: string): Promise<Message[]> {
-  // Get messages to and from the agent
+  // Get messages between user and agent in both directions
   const [toAgent, fromAgent] = await Promise.all([
     fetchMessages({ to_agent: agent }),
     fetchMessages({ from_agent: agent }),
   ]);
 
+  // Filter to only messages in this specific conversation
+  // - Messages FROM user TO agent
+  // - Messages FROM agent TO user
+  const userToAgent = toAgent.filter((m) => m.from_agent === "user");
+  const agentToUser = fromAgent.filter((m) => m.to_agent === "user");
+
   // Merge and sort by timestamp
-  const all = [...toAgent, ...fromAgent];
+  const all = [...userToAgent, ...agentToUser];
   const unique = Array.from(new Map(all.map((m) => [m.id, m])).values());
   return unique.sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
