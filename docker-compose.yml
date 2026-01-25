@@ -65,6 +65,12 @@ services:
         TEAM_SERVER_URL: http://team-server:3030
     environment:
       - TEAM_SERVER_URL=http://team-server:3030
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-teamchat2024}
+      - AUTH_TRUST_HOST=true
+      - AUTH_SECRET=FnVG/qcs9h4MRzkb7h4CtRQWJcY84z8u3gLYKyvL9Pk=
+      - AUTH_URL=https://chat.chrisdburr.com
+      - NEXTAUTH_URL=https://chat.chrisdburr.com
     depends_on:
       team-server:
         condition: service_healthy
@@ -76,6 +82,11 @@ services:
       start_period: 10s
     labels:
       - "traefik.enable=true"
+      # Auth routes (higher priority than backend /api)
+      - "traefik.http.routers.auth.rule=PathPrefix(`/api/auth`)"
+      - "traefik.http.routers.auth.entrypoints=web"
+      - "traefik.http.routers.auth.service=team-dashboard"
+      - "traefik.http.routers.auth.priority=100"
       # Catch-all route (lower priority than /api and /ws)
       - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
       - "traefik.http.routers.frontend.entrypoints=web"

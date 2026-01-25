@@ -5,6 +5,9 @@ export const authConfig: NextAuthConfig = {
   pages: {
     signIn: "/login",
   },
+  session: {
+    strategy: "jwt",
+  },
   providers: [
     Credentials({
       name: "credentials",
