@@ -34,19 +34,6 @@ export function MessageItem({ message }: MessageItemProps) {
         <div className="text-sm whitespace-pre-wrap break-words">
           {message.content}
         </div>
-
-        {message.tags && message.tags.length > 0 && (
-          <div className="flex gap-1 mt-1">
-            {message.tags.map((tag) => (
-              <span
-                key={tag}
-                className="text-xs bg-muted px-1.5 py-0.5 rounded"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );

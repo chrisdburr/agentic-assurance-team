@@ -4,30 +4,32 @@ import { useState } from "react";
 import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { sendMessage } from "@/lib/api";
 
 interface MessageInputProps {
   channel?: string;
   agent?: string;
+  onSend: (content: string) => Promise<void>;
 }
 
-export function MessageInput({ channel, agent }: MessageInputProps) {
+export function MessageInput({ channel, agent, onSend }: MessageInputProps) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim() || sending) return;
 
-    const to = channel || agent;
-    if (!to) return;
-
     setSending(true);
+    setError(null);
+    const content = message.trim();
+    setMessage(""); // Clear input immediately for better UX
+
     try {
-      await sendMessage(to, message.trim());
-      setMessage("");
-    } catch (error) {
-      console.error("Failed to send message:", error);
+      await onSend(content);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send message");
+      setMessage(content); // Restore message on error
     } finally {
       setSending(false);
     }
@@ -41,6 +43,9 @@ export function MessageInput({ channel, agent }: MessageInputProps) {
 
   return (
     <form onSubmit={handleSubmit} className="border-t p-4">
+      {error && (
+        <div className="text-sm text-red-500 mb-2">{error}</div>
+      )}
       <div className="flex gap-2">
         <Input
           value={message}

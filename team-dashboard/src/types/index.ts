@@ -1,13 +1,12 @@
 // Message from the team server
 export interface Message {
-  id: number;
-  timestamp: string;
+  id: string;
   from_agent: string;
   to_agent: string;
-  message_type: string;
   content: string;
-  payload?: Record<string, unknown>;
-  tags?: string[];
+  thread_id: string;
+  timestamp: string;
+  read_by: string;
 }
 
 // Agent status from dispatcher

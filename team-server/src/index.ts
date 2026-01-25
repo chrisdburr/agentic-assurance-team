@@ -10,6 +10,8 @@ import { serveStatic } from "hono/bun";
 import { toolDefinitions, handleToolCall } from "./tools.js";
 import {
   getAllMessages,
+  getMessagesByToAgent,
+  getMessagesByFromAgent,
   getThread,
   getStandupsByDate,
   getTodayStandups,
@@ -37,7 +39,7 @@ const isMcpMode = process.argv.includes("--mcp");
 const wsClients = new Set<{ send: (data: string) => void }>();
 
 function broadcast(event: string, data: unknown) {
-  const message = JSON.stringify({ event, data, timestamp: new Date().toISOString() });
+  const message = JSON.stringify({ type: event, data, timestamp: new Date().toISOString() });
   for (const client of wsClients) {
     try {
       client.send(message);
@@ -132,7 +134,17 @@ function runHttpServer() {
   // API Routes
   app.get("/api/messages", (c) => {
     const limit = parseInt(c.req.query("limit") || "100");
-    const messages = getAllMessages(limit);
+    const toAgent = c.req.query("to_agent");
+    const fromAgent = c.req.query("from_agent");
+
+    let messages;
+    if (toAgent) {
+      messages = getMessagesByToAgent(toAgent, limit);
+    } else if (fromAgent) {
+      messages = getMessagesByFromAgent(fromAgent, limit);
+    } else {
+      messages = getAllMessages(limit);
+    }
     return c.json({ messages });
   });
 

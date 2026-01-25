@@ -66,6 +66,14 @@ const countUnreadMessagesForAgent = db.prepare(
    AND NOT (read_by LIKE '%"' || $agentId || '"%')`
 );
 
+const selectMessagesByToAgent = db.prepare(
+  `SELECT * FROM messages WHERE to_agent = $toAgent ORDER BY timestamp DESC LIMIT $limit`
+);
+
+const selectMessagesByFromAgent = db.prepare(
+  `SELECT * FROM messages WHERE from_agent = $fromAgent ORDER BY timestamp DESC LIMIT $limit`
+);
+
 const selectMessagesByThread = db.prepare(
   `SELECT * FROM messages WHERE thread_id = $threadId ORDER BY timestamp ASC`
 );
@@ -169,6 +177,14 @@ export function getThread(threadId: string): Message[] {
 
 export function getAllMessages(limit = 100): Message[] {
   return selectAllMessages.all({ $limit: limit }) as Message[];
+}
+
+export function getMessagesByToAgent(toAgent: string, limit = 100): Message[] {
+  return selectMessagesByToAgent.all({ $toAgent: toAgent, $limit: limit }) as Message[];
+}
+
+export function getMessagesByFromAgent(fromAgent: string, limit = 100): Message[] {
+  return selectMessagesByFromAgent.all({ $fromAgent: fromAgent, $limit: limit }) as Message[];
 }
 
 export function getUnreadMessages(agentId: string): { count: number; messages: Message[] } {
