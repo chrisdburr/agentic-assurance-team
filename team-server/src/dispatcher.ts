@@ -28,13 +28,15 @@ interface AgentState {
   lastSeenMessageTime: string; // ISO timestamp of newest message when last triggered
   activeProcess: ReturnType<typeof Bun.spawn> | null;
   triggerCount: number;
+  lastExitCode: number | null;
+  lastActiveStart: number | null;
 }
 
 // State tracking per agent
 const agentState: Record<AgentId, AgentState> = {
-  alice: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0 },
-  bob: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0 },
-  charlie: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0 },
+  alice: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0, lastExitCode: null, lastActiveStart: null },
+  bob: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0, lastExitCode: null, lastActiveStart: null },
+  charlie: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0, lastExitCode: null, lastActiveStart: null },
 };
 
 // Track dispatcher state
@@ -70,6 +72,42 @@ function canTrigger(agent: AgentId): boolean {
   return true;
 }
 
+export type HealthStatus = "green" | "yellow" | "red";
+
+/**
+ * Get health status for an agent
+ * - green: No active process, last exit was 0 or never triggered
+ * - yellow: In cooldown period, or active but < 2 minutes
+ * - red: Active > 2 minutes (stuck), or last exit non-zero
+ */
+export function getAgentHealth(agent: AgentId): HealthStatus {
+  const state = agentState[agent];
+  const now = Date.now();
+  const TWO_MINUTES = 2 * 60 * 1000;
+
+  // If process is active
+  if (state.activeProcess !== null && state.lastActiveStart !== null) {
+    const activeTime = now - state.lastActiveStart;
+    if (activeTime > TWO_MINUTES) {
+      return "red"; // Stuck - active for more than 2 minutes
+    }
+    return "yellow"; // Active but still healthy
+  }
+
+  // If in cooldown period
+  if (now - state.lastTriggerTime < COOLDOWN) {
+    return "yellow";
+  }
+
+  // If last exit was non-zero
+  if (state.lastExitCode !== null && state.lastExitCode !== 0) {
+    return "red";
+  }
+
+  // Green: idle, no issues
+  return "green";
+}
+
 /**
  * Trigger an agent session via Claude CLI
  */
@@ -80,6 +118,7 @@ async function triggerAgent(agent: AgentId): Promise<void> {
   console.log(`[Dispatcher] Triggering ${agent} (session: ${sessionId})`);
 
   state.lastTriggerTime = Date.now();
+  state.lastActiveStart = Date.now();
   state.triggerCount++;
 
   // Broadcast trigger event
@@ -119,6 +158,8 @@ async function triggerAgent(agent: AgentId): Promise<void> {
     // Handle process completion
     proc.exited.then((exitCode) => {
       state.activeProcess = null;
+      state.lastExitCode = exitCode;
+      state.lastActiveStart = null;
 
       console.log(`[Dispatcher] ${agent} session ended (exit code: ${exitCode})`);
 
@@ -279,17 +320,43 @@ export function getDispatcherStatus(): {
   enabled: boolean;
   pollInterval: number;
   cooldown: number;
-  agents: Record<string, { lastTrigger: string | null; lastSeenMessage: string | null; active: boolean; triggerCount: number }>;
+  agents: Record<string, {
+    lastTrigger: string | null;
+    lastSeenMessage: string | null;
+    active: boolean;
+    triggerCount: number;
+    health: HealthStatus;
+    lastExitCode: number | null;
+    activeForMs: number | null;
+    cooldownRemainingMs: number | null;
+  }>;
 } {
-  const agents: Record<string, { lastTrigger: string | null; lastSeenMessage: string | null; active: boolean; triggerCount: number }> = {};
+  const agents: Record<string, {
+    lastTrigger: string | null;
+    lastSeenMessage: string | null;
+    active: boolean;
+    triggerCount: number;
+    health: HealthStatus;
+    lastExitCode: number | null;
+    activeForMs: number | null;
+    cooldownRemainingMs: number | null;
+  }> = {};
+
+  const now = Date.now();
 
   for (const agent of AGENTS) {
     const state = agentState[agent];
+    const cooldownRemaining = Math.max(0, COOLDOWN - (now - state.lastTriggerTime));
+
     agents[agent] = {
       lastTrigger: state.lastTriggerTime ? new Date(state.lastTriggerTime).toISOString() : null,
       lastSeenMessage: state.lastSeenMessageTime || null,
       active: state.activeProcess !== null,
       triggerCount: state.triggerCount,
+      health: getAgentHealth(agent),
+      lastExitCode: state.lastExitCode,
+      activeForMs: state.lastActiveStart !== null ? now - state.lastActiveStart : null,
+      cooldownRemainingMs: cooldownRemaining > 0 ? cooldownRemaining : null,
     };
   }
 

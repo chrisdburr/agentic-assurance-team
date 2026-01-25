@@ -55,3 +55,25 @@ export function getAgent(id: string) {
     borderColor: "border-gray-500",
   };
 }
+
+// Health status colors
+export const HEALTH_STATUS = {
+  green: {
+    bgColor: "bg-green-500",
+    textColor: "text-green-500",
+    borderColor: "border-green-500",
+    label: "Healthy",
+  },
+  yellow: {
+    bgColor: "bg-yellow-500",
+    textColor: "text-yellow-500",
+    borderColor: "border-yellow-500",
+    label: "Busy",
+  },
+  red: {
+    bgColor: "bg-red-500",
+    textColor: "text-red-500",
+    borderColor: "border-red-500",
+    label: "Issue",
+  },
+} as const;

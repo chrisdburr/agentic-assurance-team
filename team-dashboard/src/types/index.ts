@@ -31,6 +31,8 @@ export type WSEventType =
   | "status"
   | "agent_triggered"
   | "agent_session_ended"
+  | "agent_trigger_failed"
+  | "dispatcher_status"
   | "connected"
   | "error";
 
@@ -46,4 +48,27 @@ export interface MessageFilter {
   tags?: string[];
   limit?: number;
   offset?: number;
+}
+
+// Health status for agents
+export type HealthStatus = "green" | "yellow" | "red";
+
+// Agent monitoring data
+export interface AgentMonitoringData {
+  lastTrigger: string | null;
+  lastSeenMessage: string | null;
+  active: boolean;
+  triggerCount: number;
+  health: HealthStatus;
+  lastExitCode: number | null;
+  activeForMs: number | null;
+  cooldownRemainingMs: number | null;
+}
+
+// Full monitoring data from dispatcher
+export interface MonitoringData {
+  enabled: boolean;
+  pollInterval: number;
+  cooldown: number;
+  agents: Record<string, AgentMonitoringData>;
 }

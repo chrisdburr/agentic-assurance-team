@@ -1,4 +1,4 @@
-import type { Message, AgentStatus, RosterEntry, MessageFilter } from "@/types";
+import type { Message, AgentStatus, RosterEntry, MessageFilter, MonitoringData } from "@/types";
 
 const API_BASE = "/api/backend";
 
@@ -71,4 +71,23 @@ export async function sendMessage(
     throw new Error(error.error || "Failed to send message");
   }
   return res.json();
+}
+
+// Fetch monitoring data from dispatcher
+export async function fetchMonitoringData(): Promise<MonitoringData> {
+  const res = await fetch(`${API_BASE}/dispatcher/status`);
+  if (!res.ok) throw new Error("Failed to fetch monitoring data");
+  return res.json();
+}
+
+// Manually trigger an agent
+export async function triggerAgent(agent: string): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/dispatcher/trigger/${agent}`, {
+    method: "POST",
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to trigger agent");
+  }
+  return data;
 }

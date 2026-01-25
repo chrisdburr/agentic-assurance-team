@@ -1,6 +1,7 @@
 "use client";
 
-import { MessageSquare, LogOut, Wifi, WifiOff } from "lucide-react";
+import { MessageSquare, LogOut, Wifi, WifiOff, Activity } from "lucide-react";
+import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import {
   Sidebar,
@@ -57,6 +58,17 @@ export function AppSidebar() {
         <NavChannels />
         <Separator className="my-2" />
         <NavDMs activeAgents={activeAgents} />
+        <Separator className="my-2" />
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <Link href="/monitoring" className="flex items-center gap-2">
+                <Activity className="h-4 w-4" />
+                <span>Monitoring</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarContent>
 
       <SidebarFooter className="p-4">
