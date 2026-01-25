@@ -24,12 +24,6 @@ import {
   generateSummary,
 } from "./orchestrator.js";
 import {
-  initSlackBot,
-  createSlackEventHandler,
-  getSlackStatus,
-  notifyBeadsEvent,
-} from "./slack.js";
-import {
   initDispatcher,
   getDispatcherStatus,
   manualTrigger,
@@ -181,13 +175,6 @@ function runHttpServer() {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Slack integration endpoints
-  app.post("/api/slack/events", createSlackEventHandler());
-
-  app.get("/api/slack/status", (c) => {
-    return c.json(getSlackStatus());
-  });
-
   // Dispatcher endpoints
   app.get("/api/dispatcher/status", (c) => {
     return c.json(getDispatcherStatus());
@@ -200,26 +187,6 @@ function runHttpServer() {
       return c.json(result, 400);
     }
     return c.json(result);
-  });
-
-  // Beads notification endpoint (for Slack integration)
-  app.post("/api/beads/notify", async (c) => {
-    try {
-      const body = await c.req.json() as {
-        event: "created" | "assigned" | "closed";
-        issue_id: string;
-        title: string;
-        assignee?: string;
-      };
-
-      await notifyBeadsEvent(body.event, body.issue_id, body.title, body.assignee);
-      broadcast("beads_event", body);
-
-      return c.json({ success: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ success: false, error: message }, 400);
-    }
   });
 
   // Standup orchestration endpoints
@@ -291,9 +258,6 @@ function runHttpServer() {
 
   console.log(`Team HTTP server running on http://localhost:${WEB_PORT}`);
   console.log(`WebSocket available at ws://localhost:${WEB_PORT}/ws`);
-
-  // Initialize Slack bot if configured
-  initSlackBot(broadcast);
 
   // Initialize agent dispatcher
   initDispatcher(broadcast);
