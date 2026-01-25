@@ -99,6 +99,7 @@ async function triggerAgent(agent: AgentId): Promise<void> {
         agent,
         "--session-id",
         sessionId,
+        "--resume",
         "-p",
         "Check your inbox and respond to new messages. Use message_list with unread_only=true to see unread messages, then respond appropriately.",
         "--max-turns",
