@@ -13,7 +13,9 @@ export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> 
   const url = `${API_BASE}/messages${params.toString() ? `?${params}` : ""}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to fetch messages");
-  return res.json();
+  const data = await res.json();
+  // API returns { messages: [...] }
+  return data.messages || [];
 }
 
 // Fetch messages for a channel (to_agent = channel name)
