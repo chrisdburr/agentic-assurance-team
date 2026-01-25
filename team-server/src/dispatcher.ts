@@ -3,7 +3,8 @@
  *
  * Watches team.db for unread messages and triggers agent sessions via Claude Code CLI.
  *
- * Flow: Unread messages -> Poll every 5s -> Debounce (30s cooldown) -> Spawn claude CLI
+ * Flow: Unread messages -> Poll every 5s -> Debounce (60s cooldown) -> Spawn claude CLI
+ * Only triggers if there are NEW messages since last trigger (prevents re-processing).
  */
 
 import { getUnreadMessages } from "./db.js";
@@ -15,8 +16,7 @@ const PROJECT_ROOT = resolve(__dirname, "../..");
 
 // Configuration from environment
 const POLL_INTERVAL = parseInt(process.env.DISPATCHER_POLL_INTERVAL || "5000");
-const COOLDOWN = parseInt(process.env.DISPATCHER_COOLDOWN || "30000");
-const MAX_TURNS = parseInt(process.env.DISPATCHER_MAX_TURNS || "10");
+const COOLDOWN = parseInt(process.env.DISPATCHER_COOLDOWN || "60000");
 const DISPATCHER_ENABLED = process.env.DISPATCHER_ENABLED !== "false";
 
 // Agent configuration
@@ -25,15 +25,16 @@ type AgentId = (typeof AGENTS)[number];
 
 interface AgentState {
   lastTriggerTime: number;
+  lastSeenMessageTime: string; // ISO timestamp of newest message when last triggered
   activeProcess: ReturnType<typeof Bun.spawn> | null;
   triggerCount: number;
 }
 
 // State tracking per agent
 const agentState: Record<AgentId, AgentState> = {
-  alice: { lastTriggerTime: 0, activeProcess: null, triggerCount: 0 },
-  bob: { lastTriggerTime: 0, activeProcess: null, triggerCount: 0 },
-  charlie: { lastTriggerTime: 0, activeProcess: null, triggerCount: 0 },
+  alice: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0 },
+  bob: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0 },
+  charlie: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0 },
 };
 
 // Track dispatcher state
@@ -188,20 +189,38 @@ async function checkAndTrigger(): Promise<void> {
 
       if (count === 0) continue;
 
+      const state = agentState[agent];
+
+      // Find the newest message timestamp
+      const newestMessageTime = messages.reduce(
+        (newest, m) => (m.timestamp > newest ? m.timestamp : newest),
+        ""
+      );
+
+      // Only trigger if there are messages newer than what we last saw
+      const hasNewMessages = newestMessageTime > state.lastSeenMessageTime;
+
+      if (!hasNewMessages) {
+        // Messages exist but we've already triggered for them
+        continue;
+      }
+
       if (!canTrigger(agent)) {
-        const state = agentState[agent];
         const remaining = Math.max(0, COOLDOWN - (Date.now() - state.lastTriggerTime));
         if (remaining > 0 && state.activeProcess === null) {
           console.log(
-            `[Dispatcher] ${agent} has ${count} unread but in cooldown (${Math.ceil(remaining / 1000)}s remaining)`
+            `[Dispatcher] ${agent} has ${count} NEW unread but in cooldown (${Math.ceil(remaining / 1000)}s remaining)`
           );
         } else if (state.activeProcess !== null) {
-          console.log(`[Dispatcher] ${agent} has ${count} unread but session is active`);
+          console.log(`[Dispatcher] ${agent} has ${count} NEW unread but session is active`);
         }
         continue;
       }
 
-      console.log(`[Dispatcher] ${agent} has ${count} unread message(s) from: ${messages.map((m) => m.from_agent).join(", ")}`);
+      // Update lastSeenMessageTime before triggering
+      state.lastSeenMessageTime = newestMessageTime;
+
+      console.log(`[Dispatcher] ${agent} has ${count} NEW unread message(s) from: ${messages.map((m) => m.from_agent).join(", ")}`);
       await triggerAgent(agent);
     } catch (error) {
       console.error(`[Dispatcher] Error checking ${agent}:`, error);
@@ -224,7 +243,7 @@ export function initDispatcher(
   dispatcherEnabled = true;
 
   console.log(
-    `[Dispatcher] Initialized (poll: ${POLL_INTERVAL}ms, cooldown: ${COOLDOWN}ms, max-turns: ${MAX_TURNS})`
+    `[Dispatcher] Initialized (poll: ${POLL_INTERVAL}ms, cooldown: ${COOLDOWN}ms)`
   );
 
   // Start polling
@@ -260,14 +279,15 @@ export function getDispatcherStatus(): {
   enabled: boolean;
   pollInterval: number;
   cooldown: number;
-  agents: Record<string, { lastTrigger: string | null; active: boolean; triggerCount: number }>;
+  agents: Record<string, { lastTrigger: string | null; lastSeenMessage: string | null; active: boolean; triggerCount: number }>;
 } {
-  const agents: Record<string, { lastTrigger: string | null; active: boolean; triggerCount: number }> = {};
+  const agents: Record<string, { lastTrigger: string | null; lastSeenMessage: string | null; active: boolean; triggerCount: number }> = {};
 
   for (const agent of AGENTS) {
     const state = agentState[agent];
     agents[agent] = {
       lastTrigger: state.lastTriggerTime ? new Date(state.lastTriggerTime).toISOString() : null,
+      lastSeenMessage: state.lastSeenMessageTime || null,
       active: state.activeProcess !== null,
       triggerCount: state.triggerCount,
     };
