@@ -137,10 +137,11 @@ function runHttpServer() {
   });
 
   // POST /api/messages - Send a new message
+  const MAX_CONTENT_LENGTH = 10000;
   app.post("/api/messages", async (c) => {
     try {
       const body = await c.req.json();
-      const { to, content, from, thread_id } = body;
+      const { to, content, thread_id } = body;
 
       // Validation
       if (!to || typeof to !== "string") {
@@ -149,8 +150,12 @@ function runHttpServer() {
       if (!content || typeof content !== "string" || !content.trim()) {
         return c.json({ success: false, error: "Missing or invalid 'content' field" }, 400);
       }
+      if (content.length > MAX_CONTENT_LENGTH) {
+        return c.json({ success: false, error: `Content exceeds maximum length of ${MAX_CONTENT_LENGTH}` }, 400);
+      }
 
-      const fromAgent = from || "user";
+      // Always use "user" for PWA messages - prevents impersonation
+      const fromAgent = "user";
       const messageId = sendMessage(fromAgent, to, content, thread_id);
 
       const result = {
