@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import useSWR from "swr";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageList } from "./message-list";
@@ -8,7 +8,6 @@ import { MessageInput } from "./message-input";
 import { ScrollToTopButton } from "./scroll-to-top-button";
 import { fetchChannelMessages, fetchDMMessages, sendMessage } from "@/lib/api";
 import { filterRecentMessages } from "@/lib/message-utils";
-import { useChatScroll } from "@/hooks/use-chat-scroll";
 import type { Message } from "@/types";
 import { useWebSocket } from "@/hooks/use-websocket";
 
@@ -52,42 +51,97 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   // Filter messages into recent and older
   const { recent, older } = filterRecentMessages(messages);
 
+  // If no recent messages but we have older ones, auto-show latest batch
+  const effectiveShowOlderCount =
+    recent.length === 0 && older.length > 0 && showOlderCount === 0
+      ? Math.min(LOAD_MORE_BATCH, older.length)
+      : showOlderCount;
+
   // Get visible older messages (from the end, most recent of the older)
-  const visibleOlder = showOlderCount > 0 ? older.slice(-showOlderCount) : [];
+  const visibleOlder =
+    effectiveShowOlderCount > 0 ? older.slice(-effectiveShowOlderCount) : [];
   const visibleMessages = [...visibleOlder, ...recent];
 
   // Remaining older messages not yet loaded
-  const remainingOlderCount = older.length - showOlderCount;
+  const remainingOlderCount = older.length - effectiveShowOlderCount;
 
-  // Chat scroll management
-  const { showScrollToTop, scrollToTop, getViewport } = useChatScroll({
-    chatKey: key,
-    messageCount: visibleMessages.length,
-  });
+  // Scroll management
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
+  const isInitialLoad = useRef(true);
+
+  // Get the actual scrollable viewport inside ScrollArea
+  const getViewport = useCallback(() => {
+    return scrollRef.current?.querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement | null;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const viewport = getViewport();
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+  }, [getViewport]);
+
+  const scrollToTop = useCallback(() => {
+    const viewport = getViewport();
+    if (viewport) {
+      viewport.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [getViewport]);
 
   // Reset older messages count when changing chats
   useEffect(() => {
     setShowOlderCount(0);
+    isInitialLoad.current = true;
   }, [key]);
+
+  // Auto-scroll to bottom on initial load and when messages change
+  useEffect(() => {
+    if (visibleMessages.length > 0) {
+      // Small delay to ensure DOM is ready
+      const timer = setTimeout(() => {
+        if (isInitialLoad.current) {
+          scrollToBottom();
+          isInitialLoad.current = false;
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [visibleMessages.length, scrollToBottom]);
+
+  // Track scroll position for scroll-to-top button
+  useEffect(() => {
+    const viewport = getViewport();
+    if (!viewport) return;
+
+    const handleScroll = () => {
+      setShowScrollToTop(viewport.scrollTop > 200);
+    };
+
+    viewport.addEventListener("scroll", handleScroll);
+    return () => viewport.removeEventListener("scroll", handleScroll);
+  }, [getViewport, key]);
 
   // Handle loading more older messages with scroll preservation
   const handleLoadMore = useCallback(() => {
     const viewport = getViewport();
+    const currentVisible = effectiveShowOlderCount;
+
     if (!viewport) {
-      setShowOlderCount((prev) => Math.min(prev + LOAD_MORE_BATCH, older.length));
+      setShowOlderCount(Math.min(currentVisible + LOAD_MORE_BATCH, older.length));
       return;
     }
 
     const prevScrollHeight = viewport.scrollHeight;
 
-    setShowOlderCount((prev) => Math.min(prev + LOAD_MORE_BATCH, older.length));
+    setShowOlderCount(Math.min(currentVisible + LOAD_MORE_BATCH, older.length));
 
     // Preserve scroll position after new content is rendered
     requestAnimationFrame(() => {
       const heightDiff = viewport.scrollHeight - prevScrollHeight;
       viewport.scrollTop += heightDiff;
     });
-  }, [getViewport, older.length]);
+  }, [getViewport, older.length, effectiveShowOlderCount]);
 
   // Optimistic send handler
   const handleSend = useCallback(
@@ -136,9 +190,9 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
         <h2 className="text-lg font-semibold">{title}</h2>
       </div>
 
-      <div className="relative flex-1">
+      <div className="relative flex-1 min-h-0">
         <ScrollToTopButton onClick={scrollToTop} visible={showScrollToTop} />
-        <ScrollArea className="absolute inset-0 px-6 py-4">
+        <ScrollArea ref={scrollRef} className="h-full px-6 py-4">
           {isLoading ? (
             <div className="flex items-center justify-center h-32">
               <span className="text-muted-foreground">Loading messages...</span>

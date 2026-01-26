@@ -1,7 +1,7 @@
 import type { Message, AgentStatus, RosterEntry, MessageFilter, MonitoringData } from "@/types";
 
-// Next.js rewrites /api/backend/* to team-server
-const API_BASE = "/api/backend";
+// Next.js rewrites /backend/* to team-server
+const API_BASE = "/backend";
 
 // Fetch messages with optional filters
 export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> {

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Play, Clock, Activity, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HealthIndicator } from "./health-indicator";
@@ -85,6 +85,7 @@ export function AgentCard({ agentId, data, onTrigger }: AgentCardProps) {
           <div className="flex items-center gap-3">
             <div className="relative">
               <Avatar size="lg">
+                {agent.avatar && <AvatarImage src={agent.avatar} alt={agent.name} />}
                 <AvatarFallback className={cn(agent.bgColor, "text-white")}>
                   {agent.name[0]}
                 </AvatarFallback>

@@ -10,7 +10,7 @@ interface Props {
 
 export function SessionProvider({ children, session }: Props) {
   return (
-    <NextAuthSessionProvider session={session}>
+    <NextAuthSessionProvider session={session} basePath="/auth">
       {children}
     </NextAuthSessionProvider>
   );

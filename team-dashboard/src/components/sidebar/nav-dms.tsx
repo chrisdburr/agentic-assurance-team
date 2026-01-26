@@ -9,7 +9,7 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
 } from "@/components/ui/sidebar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AGENTS, getAgent } from "@/lib/constants";
 import { Badge } from "@/components/ui/badge";
 
@@ -39,6 +39,7 @@ export function NavDMs({ activeAgents = [], unreadCounts = {} }: NavDMsProps) {
                 <Link href={href} className="flex items-center gap-2">
                   <div className="relative">
                     <Avatar className="h-6 w-6">
+                      {agent.avatar && <AvatarImage src={agent.avatar} alt={agent.name} />}
                       <AvatarFallback className={agent.bgColor}>
                         {agent.name[0]}
                       </AvatarFallback>

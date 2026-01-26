@@ -1,28 +1,31 @@
-// Agent definitions with their colors
+// Agent definitions with their colors (using theme CSS variables)
 export const AGENTS = {
   alice: {
     id: "alice",
     name: "Alice",
-    color: "purple",
-    bgColor: "bg-purple-500",
-    textColor: "text-purple-500",
-    borderColor: "border-purple-500",
+    avatar: "/avatars/alice.jpeg",
+    color: "chart-2",
+    bgColor: "bg-[var(--chart-2)]",
+    textColor: "text-[var(--chart-2)]",
+    borderColor: "border-[var(--chart-2)]",
   },
   bob: {
     id: "bob",
     name: "Bob",
-    color: "blue",
-    bgColor: "bg-blue-500",
-    textColor: "text-blue-500",
-    borderColor: "border-blue-500",
+    avatar: "/avatars/bob.jpeg",
+    color: "chart-3",
+    bgColor: "bg-[var(--chart-3)]",
+    textColor: "text-[var(--chart-3)]",
+    borderColor: "border-[var(--chart-3)]",
   },
   charlie: {
     id: "charlie",
     name: "Charlie",
-    color: "green",
-    bgColor: "bg-green-500",
-    textColor: "text-green-500",
-    borderColor: "border-green-500",
+    avatar: "/avatars/charlie.jpeg",
+    color: "chart-1",
+    bgColor: "bg-[var(--chart-1)]",
+    textColor: "text-[var(--chart-1)]",
+    borderColor: "border-[var(--chart-1)]",
   },
 } as const;
 
@@ -49,10 +52,11 @@ export function getAgent(id: string) {
   return AGENTS[id as AgentId] || {
     id,
     name: id.charAt(0).toUpperCase() + id.slice(1),
-    color: "gray",
-    bgColor: "bg-gray-500",
-    textColor: "text-gray-500",
-    borderColor: "border-gray-500",
+    avatar: undefined as string | undefined,
+    color: "muted",
+    bgColor: "bg-muted-foreground",
+    textColor: "text-muted-foreground",
+    borderColor: "border-muted-foreground",
   };
 }
 

@@ -83,35 +83,42 @@ export function useChatScroll({
       isInitialLoadRef.current = true;
       setShowScrollToTop(false);
 
-      // Small delay to ensure content is rendered
-      requestAnimationFrame(() => {
+      // Delay to ensure content is rendered after route change
+      setTimeout(() => {
         const viewport = getViewport();
         if (viewport) {
           viewport.scrollTop = viewport.scrollHeight;
         }
-      });
+      }, 100);
     }
   }, [chatKey, getViewport]);
 
   // Handle message changes
   useEffect(() => {
-    const viewport = getViewport();
-    if (!viewport) return;
-
-    // On initial load, scroll to bottom immediately
+    // On initial load, scroll to bottom after content renders
     if (isInitialLoadRef.current && messageCount > 0) {
       isInitialLoadRef.current = false;
-      viewport.scrollTop = viewport.scrollHeight;
       prevMessageCountRef.current = messageCount;
+
+      // Use setTimeout to ensure DOM has fully rendered
+      setTimeout(() => {
+        const viewport = getViewport();
+        if (viewport) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+      }, 50);
       return;
     }
 
     // On new messages, only scroll if near bottom
     if (messageCount > prevMessageCountRef.current) {
       if (isNearBottom()) {
-        requestAnimationFrame(() => {
-          viewport.scrollTop = viewport.scrollHeight;
-        });
+        setTimeout(() => {
+          const viewport = getViewport();
+          if (viewport) {
+            viewport.scrollTop = viewport.scrollHeight;
+          }
+        }, 50);
       }
     }
 

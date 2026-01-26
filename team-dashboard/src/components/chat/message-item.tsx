@@ -2,7 +2,7 @@
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getAgent } from "@/lib/constants";
 import type { Message } from "@/types";
 import { formatDistanceToNow } from "@/lib/date";
@@ -40,6 +40,7 @@ export function MessageItem({ message }: MessageItemProps) {
   return (
     <div className="flex gap-3 group">
       <Avatar className="h-8 w-8 mt-0.5 shrink-0">
+        {agent.avatar && <AvatarImage src={agent.avatar} alt={agent.name} />}
         <AvatarFallback className={cn(agent.bgColor, "text-white text-xs")}>
           {agent.name[0]}
         </AvatarFallback>
