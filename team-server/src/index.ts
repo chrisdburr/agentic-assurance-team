@@ -14,6 +14,7 @@ import {
   getMessagesByFromAgent,
   getThread,
   getStandupsByDate,
+  getStandupsBySession,
   getTodayStandups,
   getTeamStatus,
   getTeamRoster,
@@ -21,16 +22,13 @@ import {
   sendMessage,
 } from "./db.js";
 import {
-  setBroadcast,
-  runFullStandup,
-  getSession,
-  generateSummary,
-} from "./orchestrator.js";
-import {
   initDispatcher,
   getDispatcherStatus,
   manualTrigger,
   triggerAgentForChannel,
+  startStandupQueue,
+  onStandupChannelMessage,
+  getStandupQueueStatus,
 } from "./dispatcher.js";
 import {
   readChannelMessages,
@@ -38,6 +36,7 @@ import {
   listChannels,
   isValidChannel,
   parseMentions,
+  onChannelMessage,
   type ChannelMessage,
 } from "./channels.js";
 
@@ -89,9 +88,6 @@ function broadcast(event: string, data: unknown) {
     }
   }
 }
-
-// Configure orchestrator to use our broadcast function
-setBroadcast(broadcast);
 
 // Wrap tool handler to broadcast updates
 async function handleToolCallWithBroadcast(
@@ -302,14 +298,25 @@ function runHttpServer() {
   // Standup orchestration endpoints
   app.post("/api/standup/start", async (c) => {
     try {
-      const session = await runFullStandup();
+      // Check if a standup is already in progress
+      const existingQueue = getStandupQueueStatus();
+      if (existingQueue) {
+        return c.json({
+          success: false,
+          error: "A standup session is already in progress",
+          session_id: existingQueue.sessionId,
+        }, 400);
+      }
+
+      const channel = "team"; // Could be parameterized in the future
+      const sessionId = startStandupQueue(channel);
+
       return c.json({
         success: true,
-        session_id: session.id,
-        date: session.date,
-        status: session.status,
-        updates: session.updates,
-        summary: generateSummary(session),
+        session_id: sessionId,
+        channel,
+        message: "Standup session started. Agents will respond sequentially in the channel.",
+        agents: ["alice", "bob", "charlie"],
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -319,16 +326,49 @@ function runHttpServer() {
 
   app.get("/api/standup/session/:sessionId", (c) => {
     const sessionId = c.req.param("sessionId");
-    const session = getSession(sessionId);
-    if (!session) {
+    const standups = getStandupsBySession(sessionId);
+
+    if (standups.length === 0) {
+      // Check if it's the active queue
+      const queue = getStandupQueueStatus();
+      if (queue && queue.sessionId === sessionId) {
+        return c.json({
+          session_id: sessionId,
+          status: "in_progress",
+          current_agent: queue.currentAgent,
+          completed_agents: queue.completedAgents,
+          pending_agents: queue.pendingAgents,
+          updates: [],
+        });
+      }
       return c.json({ error: `Session ${sessionId} not found` }, 404);
     }
+
     return c.json({
-      session_id: session.id,
-      date: session.date,
-      status: session.status,
-      updates: session.updates,
-      summary: generateSummary(session),
+      session_id: sessionId,
+      status: "completed",
+      updates: standups.map((s) => ({
+        agent_id: s.agent_id,
+        content: s.content,
+        timestamp: s.timestamp,
+      })),
+    });
+  });
+
+  // Get current standup queue status
+  app.get("/api/standup/status", (c) => {
+    const queue = getStandupQueueStatus();
+    if (!queue) {
+      return c.json({ active: false });
+    }
+    return c.json({
+      active: true,
+      session_id: queue.sessionId,
+      channel: queue.channel,
+      current_agent: queue.currentAgent,
+      completed_agents: queue.completedAgents,
+      pending_agents: queue.pendingAgents,
+      started_at: queue.startedAt,
     });
   });
 
@@ -435,6 +475,12 @@ function runHttpServer() {
 
   // Initialize agent dispatcher
   initDispatcher(broadcast);
+
+  // Wire up channel message listener for standup detection
+  onChannelMessage((channel, message) => {
+    // Notify dispatcher for standup queue advancement
+    onStandupChannelMessage(channel, message.from, message.content);
+  });
 }
 
 // Main entry point

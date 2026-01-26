@@ -7,9 +7,10 @@
  * Only triggers if there are NEW messages since last trigger (prevents re-processing).
  */
 
-import { getUnreadMessages } from "./db.js";
+import { getUnreadMessages, postStandup } from "./db.js";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import { nanoid } from "nanoid";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -22,6 +23,17 @@ const DISPATCHER_ENABLED = process.env.DISPATCHER_ENABLED !== "false";
 // Agent configuration
 const AGENTS = ["alice", "bob", "charlie"] as const;
 type AgentId = (typeof AGENTS)[number];
+export type { AgentId };
+
+// Standup queue for sequential agent triggering
+interface StandupQueue {
+  sessionId: string;
+  channel: string;
+  pendingAgents: AgentId[];
+  currentAgent: AgentId | null;
+  completedAgents: AgentId[];
+  startedAt: string;
+}
 
 interface AgentState {
   lastTriggerTime: number;
@@ -43,6 +55,9 @@ const agentState: Record<AgentId, AgentState> = {
 let dispatcherEnabled = false;
 let pollIntervalId: ReturnType<typeof setInterval> | null = null;
 let broadcast: ((event: string, data: unknown) => void) | null = null;
+
+// Active standup queue (null when no standup in progress)
+let activeStandupQueue: StandupQueue | null = null;
 
 /**
  * Get session ID for an agent from environment
@@ -528,4 +543,240 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
 
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * Start a standup queue - triggers agents sequentially via their resumed sessions
+ */
+export function startStandupQueue(channel: string, agents: AgentId[] = [...AGENTS]): string {
+  if (activeStandupQueue) {
+    throw new Error("A standup session is already in progress");
+  }
+
+  const sessionId = `standup_${nanoid(10)}`;
+  activeStandupQueue = {
+    sessionId,
+    channel,
+    pendingAgents: [...agents],
+    currentAgent: null,
+    completedAgents: [],
+    startedAt: new Date().toISOString(),
+  };
+
+  console.log(`[Dispatcher] Starting standup session ${sessionId} in #${channel}`);
+
+  if (broadcast) {
+    broadcast("standup_session_start", {
+      sessionId,
+      channel,
+      agents,
+      timestamp: activeStandupQueue.startedAt,
+    });
+  }
+
+  // Trigger the first agent
+  triggerNextStandupAgent();
+
+  return sessionId;
+}
+
+/**
+ * Trigger the next agent in the standup queue
+ */
+function triggerNextStandupAgent(): void {
+  if (!activeStandupQueue) {
+    return;
+  }
+
+  if (activeStandupQueue.pendingAgents.length === 0) {
+    // Standup complete
+    const session = activeStandupQueue;
+    console.log(`[Dispatcher] Standup session ${session.sessionId} complete`);
+
+    if (broadcast) {
+      broadcast("standup_session_complete", {
+        sessionId: session.sessionId,
+        channel: session.channel,
+        completedAgents: session.completedAgents,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    activeStandupQueue = null;
+    return;
+  }
+
+  const nextAgent = activeStandupQueue.pendingAgents.shift()!;
+  activeStandupQueue.currentAgent = nextAgent;
+
+  console.log(`[Dispatcher] Triggering ${nextAgent} for standup in #${activeStandupQueue.channel}`);
+
+  triggerAgentForStandup(nextAgent, activeStandupQueue.channel, activeStandupQueue.sessionId);
+}
+
+/**
+ * Trigger a specific agent for standup using their resumed session
+ */
+async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId: string): Promise<void> {
+  const sessionIdEnv = getSessionId(agent);
+  const state = agentState[agent];
+
+  state.lastTriggerTime = Date.now();
+  state.lastActiveStart = Date.now();
+  state.triggerCount++;
+
+  if (broadcast) {
+    broadcast("agent_triggered", {
+      agent,
+      sessionId: sessionIdEnv,
+      channel,
+      reason: "standup",
+      standupSessionId: sessionId,
+      timestamp: new Date().toISOString(),
+      triggerCount: state.triggerCount,
+    });
+  }
+
+  try {
+    const proc = Bun.spawn(
+      [
+        "claude",
+        "-r",
+        sessionIdEnv,
+        `A standup has been requested in #${channel}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`,
+        "-p",
+      ],
+      {
+        cwd: PROJECT_ROOT,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          AGENT_ID: agent,
+        },
+      }
+    );
+
+    state.activeProcess = proc;
+
+    // Handle process completion
+    proc.exited.then((exitCode) => {
+      state.activeProcess = null;
+      state.lastExitCode = exitCode;
+      state.lastActiveStart = null;
+
+      console.log(`[Dispatcher] ${agent} standup session ended (exit code: ${exitCode})`);
+
+      if (broadcast) {
+        broadcast("agent_session_ended", {
+          agent,
+          sessionId: sessionIdEnv,
+          channel,
+          reason: "standup",
+          exitCode,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    });
+
+    // Collect stdout for logging
+    if (proc.stdout) {
+      const reader = proc.stdout.getReader();
+      (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = new TextDecoder().decode(value);
+            console.log(`[${agent}] ${text.trim()}`);
+          }
+        } catch {
+          // Stream closed
+        }
+      })();
+    }
+
+    // Collect stderr for logging
+    if (proc.stderr) {
+      const reader = proc.stderr.getReader();
+      (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = new TextDecoder().decode(value);
+            console.error(`[${agent}:err] ${text.trim()}`);
+          }
+        } catch {
+          // Stream closed
+        }
+      })();
+    }
+  } catch (error) {
+    console.error(`[Dispatcher] Failed to trigger ${agent} for standup:`, error);
+    state.activeProcess = null;
+    state.lastActiveStart = null;
+
+    if (broadcast) {
+      broadcast("agent_trigger_failed", {
+        agent,
+        channel,
+        reason: "standup",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Try next agent on failure
+    if (activeStandupQueue) {
+      activeStandupQueue.currentAgent = null;
+      triggerNextStandupAgent();
+    }
+  }
+}
+
+/**
+ * Called when a channel message is written - advances standup queue if applicable
+ */
+export function onStandupChannelMessage(channel: string, from: string, content: string): void {
+  if (!activeStandupQueue) {
+    return;
+  }
+
+  if (channel !== activeStandupQueue.channel) {
+    return;
+  }
+
+  if (from !== activeStandupQueue.currentAgent) {
+    return;
+  }
+
+  console.log(`[Dispatcher] ${from} completed standup in #${channel}`);
+
+  // Mark agent as completed
+  activeStandupQueue.completedAgents.push(from as AgentId);
+  activeStandupQueue.currentAgent = null;
+
+  // Save to standup database for history
+  postStandup(from, content, activeStandupQueue.sessionId);
+
+  if (broadcast) {
+    broadcast("standup_agent_complete", {
+      sessionId: activeStandupQueue.sessionId,
+      agent: from,
+      content,
+      channel,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Trigger next agent
+  triggerNextStandupAgent();
+}
+
+/**
+ * Get current standup queue status
+ */
+export function getStandupQueueStatus(): StandupQueue | null {
+  return activeStandupQueue ? { ...activeStandupQueue } : null;
 }

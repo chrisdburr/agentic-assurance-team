@@ -128,6 +128,9 @@ export function appendChannelMessage(
   const path = getChannelPath(channel);
   appendFileSync(path, JSON.stringify(message) + "\n");
 
+  // Notify listeners of the new message
+  notifyListeners(channel, message);
+
   return message;
 }
 
@@ -240,6 +243,36 @@ export function getUnreadCountsForAgent(
   }
 
   return counts as Record<ChannelId, number>;
+}
+
+// Message listeners for real-time notifications
+type ChannelMessageListener = (channel: string, message: ChannelMessage) => void;
+const messageListeners: ChannelMessageListener[] = [];
+
+/**
+ * Register a listener for new channel messages
+ */
+export function onChannelMessage(listener: ChannelMessageListener): () => void {
+  messageListeners.push(listener);
+  return () => {
+    const index = messageListeners.indexOf(listener);
+    if (index >= 0) {
+      messageListeners.splice(index, 1);
+    }
+  };
+}
+
+/**
+ * Notify all listeners of a new message
+ */
+function notifyListeners(channel: string, message: ChannelMessage): void {
+  for (const listener of messageListeners) {
+    try {
+      listener(channel, message);
+    } catch (error) {
+      console.error("[Channels] Listener error:", error);
+    }
+  }
 }
 
 // Initialize channels on module load

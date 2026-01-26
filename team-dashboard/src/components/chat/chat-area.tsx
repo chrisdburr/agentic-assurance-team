@@ -260,11 +260,11 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
           }
 
           case "standup": {
-            addSystemMessage("**Starting standup session...** This may take a few minutes as each agent provides their update.");
+            addSystemMessage("**Starting standup session...** Each agent will respond in sequence. Watch the channel for updates.");
             const result = await startStandup();
             if (result.success) {
               addSystemMessage(
-                `**Standup Complete!**\n\nSession ID: ${result.session_id}\n\n${result.summary || "All agents have posted their updates."}`
+                `**Standup initiated.** Session ID: \`${result.session_id}\`\n\nAgents will post their updates to the channel: Alice, then Bob, then Charlie.`
               );
             } else {
               addSystemMessage(`**Standup failed:** ${result.error || "Unknown error"}`);

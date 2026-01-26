@@ -5,6 +5,7 @@ import {
   getThread,
   postStandup,
   getTodayStandups,
+  getStandupsBySession,
   updateStatus,
   getTeamStatus,
   getTeamRoster,
@@ -19,10 +20,9 @@ import {
   type ChannelMessage,
 } from "./channels.js";
 import {
-  runFullStandup,
-  getSession,
-  generateSummary,
-} from "./orchestrator.js";
+  startStandupQueue,
+  getStandupQueueStatus,
+} from "./dispatcher.js";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 
@@ -199,7 +199,7 @@ export const toolDefinitions = [
   {
     name: "standup_orchestrate",
     description:
-      "Start a full standup session, spawning each agent (Alice → Bob → Charlie) sequentially. Each agent sees previous updates. Returns the complete session with all updates.",
+      "Start a full standup session, triggering each agent (Alice → Bob → Charlie) sequentially via their resumed sessions. Each agent posts their update to the team channel. Returns immediately with session ID - use standup_session_get to check progress.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -424,29 +424,60 @@ export async function handleToolCall(
     }
 
     case "standup_orchestrate": {
-      const session = await runFullStandup();
+      // Check if a standup is already in progress
+      const existingQueue = getStandupQueueStatus();
+      if (existingQueue) {
+        return {
+          success: false,
+          error: "A standup session is already in progress",
+          session_id: existingQueue.sessionId,
+          current_agent: existingQueue.currentAgent,
+        };
+      }
+
+      const channel = "team";
+      const sessionId = startStandupQueue(channel);
+
       return {
         success: true,
-        session_id: session.id,
-        date: session.date,
-        status: session.status,
-        updates: session.updates,
-        summary: generateSummary(session),
+        session_id: sessionId,
+        channel,
+        message: "Standup session started. Agents will respond sequentially in the channel.",
+        agents: ["alice", "bob", "charlie"],
       };
     }
 
     case "standup_session_get": {
       const { session_id } = args as { session_id: string };
-      const session = getSession(session_id);
-      if (!session) {
+
+      // Check if it's the active queue
+      const queue = getStandupQueueStatus();
+      if (queue && queue.sessionId === session_id) {
+        return {
+          session_id,
+          status: "in_progress",
+          channel: queue.channel,
+          current_agent: queue.currentAgent,
+          completed_agents: queue.completedAgents,
+          pending_agents: queue.pendingAgents,
+          updates: [],
+        };
+      }
+
+      // Look up in database
+      const standups = getStandupsBySession(session_id);
+      if (standups.length === 0) {
         return { error: `Session ${session_id} not found` };
       }
+
       return {
-        session_id: session.id,
-        date: session.date,
-        status: session.status,
-        updates: session.updates,
-        summary: generateSummary(session),
+        session_id,
+        status: "completed",
+        updates: standups.map((s) => ({
+          agent_id: s.agent_id,
+          content: s.content,
+          timestamp: s.timestamp,
+        })),
       };
     }
 
