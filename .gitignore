@@ -41,3 +41,11 @@ npm-debug.log*
 
 # Bun
 bun.lockb
+
+# Project subdirectories (each project is its own repo)
+projects/apps/*/
+projects/papers/*/
+projects/notes/*/
+!projects/apps/.gitkeep
+!projects/papers/.gitkeep
+!projects/notes/.gitkeep
