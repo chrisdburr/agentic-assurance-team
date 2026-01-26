@@ -10,10 +10,32 @@ import {
   getTeamRoster,
 } from "./db.js";
 import {
+  readChannelMessages,
+  getUnreadChannelMessages,
+  appendChannelMessage,
+  markChannelRead,
+  listChannels,
+  isValidChannel,
+  type ChannelMessage,
+} from "./channels.js";
+import {
   runFullStandup,
   getSession,
   generateSummary,
 } from "./orchestrator.js";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, "../..");
+
+// Safeguard constants for ask_agent
+const MAX_ASK_DEPTH = 3;
+const MAX_ASK_CALLS_PER_SESSION = 10;
+const ASK_TIMEOUT_MS = 60000; // 60 seconds
+
+// Track call count per session (resets when process restarts)
+let askCallCount = 0;
 
 // Get agent ID from environment
 const getAgentId = (): string => {
@@ -22,6 +44,17 @@ const getAgentId = (): string => {
     throw new Error("AGENT_ID environment variable not set");
   }
   return agentId;
+};
+
+// Get current ask depth from environment
+const getAskDepth = (): number => {
+  return parseInt(process.env.ASK_DEPTH || "0");
+};
+
+// Get caller chain to prevent callbacks
+const getCallerChain = (): string[] => {
+  const chain = process.env.ASK_CALLER_CHAIN || "";
+  return chain ? chain.split(",") : [];
 };
 
 // Tool definitions for MCP
@@ -186,6 +219,80 @@ export const toolDefinitions = [
       required: ["session_id"],
     },
   },
+  {
+    name: "ask_agent",
+    description:
+      "Ask another agent a question and wait for their response (synchronous). Use this when you need immediate input from a teammate to continue your work. The other agent's session will be invoked directly and their response returned to you. For notifications or handoffs that don't need an immediate response, use message_send instead.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agent: {
+          type: "string",
+          enum: ["alice", "bob", "charlie"],
+          description: "The agent to ask (alice, bob, or charlie)",
+        },
+        question: {
+          type: "string",
+          description: "The question or request for the other agent",
+        },
+      },
+      required: ["agent", "question"],
+    },
+  },
+  {
+    name: "channel_read",
+    description:
+      "Read recent messages from a team channel (team, research). Use this to see channel discussions and respond to @mentions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        channel: {
+          type: "string",
+          enum: ["team", "research"],
+          description: "The channel to read from",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of messages to return (default 20)",
+          default: 20,
+        },
+        unread_only: {
+          type: "boolean",
+          description: "Only return messages since your last read (default false)",
+          default: false,
+        },
+      },
+      required: ["channel"],
+    },
+  },
+  {
+    name: "channel_write",
+    description:
+      "Post a message to a team channel (team, research). Use this to respond to channel discussions or @mentions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        channel: {
+          type: "string",
+          enum: ["team", "research"],
+          description: "The channel to post to",
+        },
+        content: {
+          type: "string",
+          description: "Message content to post",
+        },
+      },
+      required: ["channel", "content"],
+    },
+  },
+  {
+    name: "channel_list",
+    description: "List available team channels the agent can access.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
 ];
 
 // Tool handlers
@@ -340,6 +447,239 @@ export async function handleToolCall(
         status: session.status,
         updates: session.updates,
         summary: generateSummary(session),
+      };
+    }
+
+    case "ask_agent": {
+      const { agent, question } = args as { agent: string; question: string };
+      const callerAgent = getAgentId();
+      const currentDepth = getAskDepth();
+      const callerChain = getCallerChain();
+
+      // Safeguard 1: Depth limit
+      if (currentDepth >= MAX_ASK_DEPTH) {
+        return {
+          success: false,
+          error: `Maximum ask depth (${MAX_ASK_DEPTH}) reached. Cannot invoke ${agent}.`,
+          suggestion: "Use message_send for async communication instead.",
+        };
+      }
+
+      // Safeguard 2: Call count limit
+      askCallCount++;
+      if (askCallCount > MAX_ASK_CALLS_PER_SESSION) {
+        return {
+          success: false,
+          error: `Maximum ask calls (${MAX_ASK_CALLS_PER_SESSION}) per session reached.`,
+          suggestion: "Use message_send for async communication instead.",
+        };
+      }
+
+      // Safeguard 3: No self-calls
+      if (agent === callerAgent) {
+        return {
+          success: false,
+          error: "Cannot ask yourself a question.",
+        };
+      }
+
+      // Safeguard 4: No callback in chain
+      if (callerChain.includes(agent)) {
+        return {
+          success: false,
+          error: `Cannot call ${agent} - they are already in the caller chain: ${callerChain.join(" → ")} → ${callerAgent}`,
+          suggestion: "Use message_send for async communication to avoid circular calls.",
+        };
+      }
+
+      // Get target agent's session ID
+      const sessionId = process.env[`${agent.toUpperCase()}_SESSION_ID`];
+      if (!sessionId) {
+        return {
+          success: false,
+          error: `No session ID configured for ${agent}. Set ${agent.toUpperCase()}_SESSION_ID in environment.`,
+        };
+      }
+
+      // Build new caller chain
+      const newCallerChain = [...callerChain, callerAgent].join(",");
+
+      // Log the invocation
+      console.error(`[ask_agent] ${callerAgent} asking ${agent} (depth: ${currentDepth + 1}/${MAX_ASK_DEPTH})`);
+
+      // Broadcast to dashboard that agent conversation is starting
+      const webPort = process.env.WEB_PORT || "3030";
+      fetch(`http://localhost:${webPort}/api/broadcast`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "agent_conversation",
+          data: {
+            from: callerAgent,
+            to: agent,
+            question,
+            status: "started",
+            depth: currentDepth + 1,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      }).catch(() => {});
+
+      try {
+        const proc = Bun.spawn(
+          [
+            "claude",
+            "-r",
+            sessionId,
+            `You are being asked a question by ${callerAgent}. Please respond directly and concisely.\n\nQuestion: ${question}`,
+            "-p",
+          ],
+          {
+            cwd: PROJECT_ROOT,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: {
+              ...process.env,
+              AGENT_ID: agent,
+              ASK_DEPTH: String(currentDepth + 1),
+              ASK_CALLER_CHAIN: newCallerChain,
+            },
+          }
+        );
+
+        // Wait for completion with timeout
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Timeout")), ASK_TIMEOUT_MS);
+        });
+
+        const exitCode = await Promise.race([proc.exited, timeoutPromise]);
+
+        if (exitCode !== 0) {
+          return {
+            success: false,
+            error: `Agent ${agent} session exited with code ${exitCode}`,
+          };
+        }
+
+        // Capture response
+        const response = await new Response(proc.stdout).text();
+
+        // Broadcast completion to dashboard
+        fetch(`http://localhost:${webPort}/api/broadcast`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "agent_conversation",
+            data: {
+              from: callerAgent,
+              to: agent,
+              question,
+              response: response.trim().slice(0, 200) + (response.length > 200 ? "..." : ""),
+              status: "completed",
+              depth: currentDepth + 1,
+              timestamp: new Date().toISOString(),
+            },
+          }),
+        }).catch(() => {});
+
+        return {
+          success: true,
+          agent,
+          response: response.trim(),
+          depth: currentDepth + 1,
+          call_count: askCallCount,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === "Timeout") {
+          return {
+            success: false,
+            error: `Agent ${agent} did not respond within ${ASK_TIMEOUT_MS / 1000} seconds.`,
+            suggestion: "The agent may be busy. Try message_send for async communication.",
+          };
+        }
+        return {
+          success: false,
+          error: `Failed to invoke ${agent}: ${message}`,
+        };
+      }
+    }
+
+    case "channel_read": {
+      const { channel, limit = 20, unread_only = false } = args as {
+        channel: string;
+        limit?: number;
+        unread_only?: boolean;
+      };
+
+      if (!isValidChannel(channel)) {
+        return { error: `Invalid channel: ${channel}. Valid channels: team, research` };
+      }
+
+      let messages: ChannelMessage[];
+      if (unread_only) {
+        messages = getUnreadChannelMessages(channel, agentId);
+        // Mark channel as read when fetching unread
+        if (messages.length > 0) {
+          const latestTimestamp = messages[messages.length - 1].timestamp;
+          markChannelRead(channel, agentId, latestTimestamp);
+        }
+      } else {
+        messages = readChannelMessages(channel, limit);
+      }
+
+      return {
+        channel,
+        count: messages.length,
+        messages,
+        unread_only,
+      };
+    }
+
+    case "channel_write": {
+      const { channel, content } = args as {
+        channel: string;
+        content: string;
+      };
+
+      if (!isValidChannel(channel)) {
+        return { error: `Invalid channel: ${channel}. Valid channels: team, research` };
+      }
+
+      if (!content || !content.trim()) {
+        return { error: "Message content cannot be empty" };
+      }
+
+      const message = appendChannelMessage(channel, agentId, content);
+
+      // Notify HTTP server to broadcast (fire and forget)
+      const webPort = process.env.WEB_PORT || "3030";
+      fetch(`http://localhost:${webPort}/api/broadcast`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "channel_message",
+          data: { channel, message },
+        }),
+      }).catch(() => {});
+
+      return {
+        success: true,
+        channel,
+        message,
+      };
+    }
+
+    case "channel_list": {
+      const channels = listChannels();
+      return {
+        channels: channels.map((c) => ({
+          id: c,
+          name: c === "team" ? "#team" : `#${c}`,
+          description: c === "team"
+            ? "General team discussions and announcements"
+            : "Research discussions and collaboration",
+        })),
       };
     }
 

@@ -4,18 +4,56 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getAgent } from "@/lib/constants";
-import type { Message } from "@/types";
+import type { DisplayMessage } from "@/types";
 import { formatDistanceToNow } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
+// Parse @mentions in text and return React elements with highlighting
+function renderWithMentions(text: string): React.ReactNode {
+  const mentionRegex = /@(alice|bob|charlie|team)\b/gi;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+
+  // Reset regex state
+  mentionRegex.lastIndex = 0;
+
+  while ((match = mentionRegex.exec(text)) !== null) {
+    // Add text before the mention
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+
+    // Add the styled mention
+    const mention = match[0];
+    parts.push(
+      <span
+        key={`${match.index}-${mention}`}
+        className="text-blue-600 dark:text-blue-400 font-semibold"
+      >
+        {mention}
+      </span>
+    );
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text after last mention
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : text;
+}
+
 interface MessageItemProps {
-  message: Message;
+  message: DisplayMessage;
 }
 
 export function MessageItem({ message }: MessageItemProps) {
-  const agent = getAgent(message.from_agent);
+  const agent = getAgent(message.from);
   const timestamp = new Date(message.timestamp);
-  const isUser = message.from_agent === "user";
+  const isUser = message.from === "user";
 
   if (isUser) {
     // User messages: right-aligned, simple bubble
@@ -29,7 +67,7 @@ export function MessageItem({ message }: MessageItemProps) {
             <span className="font-semibold text-sm">You</span>
           </div>
           <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-4 py-2 text-sm">
-            {message.content}
+            {renderWithMentions(message.content)}
           </div>
         </div>
       </div>
@@ -58,7 +96,18 @@ export function MessageItem({ message }: MessageItemProps) {
 
         <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3">
           <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0 prose-pre:my-2 prose-table:my-2">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                // Custom text renderer to highlight @mentions
+                text: ({ children }) => {
+                  if (typeof children === "string") {
+                    return <>{renderWithMentions(children)}</>;
+                  }
+                  return <>{children}</>;
+                },
+              }}
+            >
               {message.content}
             </ReactMarkdown>
           </div>

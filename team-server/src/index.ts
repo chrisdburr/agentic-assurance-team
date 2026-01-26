@@ -30,7 +30,48 @@ import {
   initDispatcher,
   getDispatcherStatus,
   manualTrigger,
+  triggerAgentForChannel,
 } from "./dispatcher.js";
+import {
+  readChannelMessages,
+  appendChannelMessage,
+  listChannels,
+  isValidChannel,
+  parseMentions,
+  type ChannelMessage,
+} from "./channels.js";
+
+// Parse @mentions from message content (for DMs - channels use channels.ts version)
+// Supports @alice, @bob, @charlie, @team (expands to all three)
+function parseDMMentions(content: string): string[] {
+  const mentionRegex = /@(alice|bob|charlie|team)\b/gi;
+  const matches = content.match(mentionRegex) || [];
+
+  const mentions = new Set<string>();
+  for (const match of matches) {
+    const mention = match.slice(1).toLowerCase(); // Remove @ and lowercase
+    if (mention === "team") {
+      mentions.add("alice");
+      mentions.add("bob");
+      mentions.add("charlie");
+    } else {
+      mentions.add(mention);
+    }
+  }
+
+  return Array.from(mentions);
+}
+
+// Trigger mentioned agents for a channel message
+async function triggerMentionedAgents(channel: string, message: ChannelMessage): Promise<void> {
+  for (const agentId of message.mentions) {
+    // Only trigger valid agents
+    if (["alice", "bob", "charlie"].includes(agentId)) {
+      console.log(`[Channel] Triggering ${agentId} for @mention in #${channel}`);
+      await triggerAgentForChannel(agentId, channel);
+    }
+  }
+}
 
 const WEB_PORT = parseInt(process.env.WEB_PORT || "3030");
 const isMcpMode = process.argv.includes("--mcp");
@@ -166,9 +207,12 @@ function runHttpServer() {
         return c.json({ success: false, error: `Content exceeds maximum length of ${MAX_CONTENT_LENGTH}` }, 400);
       }
 
+      // Parse @mentions from content (for DMs)
+      const mentions = parseDMMentions(content);
+
       // Always use "user" for PWA messages - prevents impersonation
       const fromAgent = "user";
-      const messageId = sendMessage(fromAgent, to, content, thread_id);
+      const messageId = sendMessage(fromAgent, to, content, thread_id, mentions);
 
       const result = {
         success: true,
@@ -177,6 +221,7 @@ function runHttpServer() {
         to,
         thread_id: thread_id || messageId,
         timestamp: new Date().toISOString(),
+        mentions,
       };
 
       // Broadcast to WebSocket clients
@@ -285,6 +330,70 @@ function runHttpServer() {
       updates: session.updates,
       summary: generateSummary(session),
     });
+  });
+
+  // Channel API Routes
+
+  // List available channels
+  app.get("/api/channels", (c) => {
+    const channels = listChannels();
+    return c.json({
+      channels: channels.map((ch) => ({
+        id: ch,
+        name: `#${ch}`,
+      })),
+    });
+  });
+
+  // Get messages from a channel
+  app.get("/api/channels/:channel/messages", (c) => {
+    const channel = c.req.param("channel");
+    const limit = parseInt(c.req.query("limit") || "50");
+
+    if (!isValidChannel(channel)) {
+      return c.json({ error: `Invalid channel: ${channel}` }, 400);
+    }
+
+    const messages = readChannelMessages(channel, limit);
+    return c.json({ channel, messages });
+  });
+
+  // Post a message to a channel
+  app.post("/api/channels/:channel/messages", async (c) => {
+    const channel = c.req.param("channel");
+
+    if (!isValidChannel(channel)) {
+      return c.json({ error: `Invalid channel: ${channel}` }, 400);
+    }
+
+    try {
+      const body = await c.req.json();
+      const { content } = body;
+
+      if (!content || typeof content !== "string" || !content.trim()) {
+        return c.json({ error: "Missing or invalid 'content' field" }, 400);
+      }
+
+      if (content.length > MAX_CONTENT_LENGTH) {
+        return c.json({ error: `Content exceeds maximum length of ${MAX_CONTENT_LENGTH}` }, 400);
+      }
+
+      // Always use "user" for dashboard messages
+      const message = appendChannelMessage(channel, "user", content);
+
+      // Broadcast to WebSocket clients
+      broadcast("channel_message", { channel, message });
+
+      // Trigger dispatcher for @mentioned agents
+      if (message.mentions.length > 0) {
+        triggerMentionedAgents(channel, message);
+      }
+
+      return c.json({ success: true, channel, message }, 201);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: msg }, 500);
+    }
   });
 
   // Start Bun server with WebSocket support

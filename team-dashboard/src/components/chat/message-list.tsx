@@ -1,11 +1,11 @@
 "use client";
 
-import type { Message } from "@/types";
+import type { DisplayMessage } from "@/types";
 import { MessageItem } from "./message-item";
 import { LoadMoreButton } from "./load-more-button";
 
 interface MessageListProps {
-  messages: Message[];
+  messages: DisplayMessage[];
   olderMessageCount?: number;
   onLoadMore?: () => void;
 }

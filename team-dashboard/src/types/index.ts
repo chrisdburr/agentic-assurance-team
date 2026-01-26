@@ -1,4 +1,4 @@
-// Message from the team server
+// Message from the team server (DMs)
 export interface Message {
   id: string;
   from_agent: string;
@@ -7,6 +7,27 @@ export interface Message {
   thread_id: string;
   timestamp: string;
   read_by: string;
+  mentions?: string; // JSON array of agent IDs mentioned in the message
+}
+
+// Channel message from JSONL storage
+export interface ChannelMessage {
+  id: string;
+  timestamp: string;
+  from: string;
+  content: string;
+  mentions: string[];
+  thread_id: string | null;
+}
+
+// Normalized message type for display (works for both DMs and channels)
+export interface DisplayMessage {
+  id: string;
+  from: string;
+  content: string;
+  timestamp: string;
+  thread_id: string | null;
+  mentions?: string[];
 }
 
 // Agent status from dispatcher
@@ -27,6 +48,7 @@ export interface RosterEntry {
 // WebSocket events
 export type WSEventType =
   | "message"
+  | "channel_message"
   | "status"
   | "agent_triggered"
   | "agent_session_ended"

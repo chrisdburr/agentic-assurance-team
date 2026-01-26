@@ -4,12 +4,45 @@ import { useEffect, useCallback, useState, useRef } from "react";
 import useSWR from "swr";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageList } from "./message-list";
-import { MessageInput } from "./message-input";
+import { MessageInput, type SlashCommand, type CommandResult } from "./message-input";
 import { ScrollToTopButton } from "./scroll-to-top-button";
-import { fetchChannelMessages, fetchDMMessages, sendMessage } from "@/lib/api";
+import { SystemMessageItem } from "./system-message-item";
+import { fetchChannelMessages, fetchDMMessages, sendMessage, sendChannelMessage, fetchTeamStatus, startStandup } from "@/lib/api";
 import { filterRecentMessages } from "@/lib/message-utils";
-import type { Message } from "@/types";
+import type { Message, ChannelMessage, DisplayMessage } from "@/types";
+
+// Convert DM Message to DisplayMessage
+function normalizeMessage(m: Message): DisplayMessage {
+  return {
+    id: m.id,
+    from: m.from_agent,
+    content: m.content,
+    timestamp: m.timestamp,
+    thread_id: m.thread_id,
+    mentions: m.mentions ? JSON.parse(m.mentions) : [],
+  };
+}
+
+// Convert ChannelMessage to DisplayMessage
+function normalizeChannelMessage(m: ChannelMessage): DisplayMessage {
+  return {
+    id: m.id,
+    from: m.from,
+    content: m.content,
+    timestamp: m.timestamp,
+    thread_id: m.thread_id,
+    mentions: m.mentions,
+  };
+}
 import { useWebSocket } from "@/hooks/use-websocket";
+
+// System message type for slash command results
+interface SystemMessage {
+  id: string;
+  type: "system";
+  content: string;
+  timestamp: string;
+}
 
 const LOAD_MORE_BATCH = 20;
 
@@ -19,12 +52,14 @@ interface ChatAreaProps {
   title: string;
 }
 
-async function fetcher(key: string): Promise<Message[]> {
+async function fetcher(key: string): Promise<DisplayMessage[]> {
   const [type, id] = key.split(":");
   if (type === "channel") {
-    return fetchChannelMessages(id);
+    const messages = await fetchChannelMessages(id);
+    return messages.map(normalizeChannelMessage);
   } else {
-    return fetchDMMessages(id);
+    const messages = await fetchDMMessages(id);
+    return messages.map(normalizeMessage);
   }
 }
 
@@ -34,6 +69,9 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
 
   // State for showing older messages
   const [showOlderCount, setShowOlderCount] = useState(0);
+
+  // State for system messages (slash command results)
+  const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
 
   // Subscribe to WebSocket events
   const { lastMessage, isConnected } = useWebSocket();
@@ -89,9 +127,10 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
     }
   }, [getViewport]);
 
-  // Reset older messages count when changing chats
+  // Reset older messages count and system messages when changing chats
   useEffect(() => {
     setShowOlderCount(0);
+    setSystemMessages([]);
     isInitialLoad.current = true;
   }, [key]);
 
@@ -147,22 +186,25 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   const handleSend = useCallback(
     async (content: string) => {
       // Create optimistic message
-      const optimisticMessage: Message = {
+      const optimisticMessage: DisplayMessage = {
         id: `temp-${Date.now()}`,
-        from_agent: "user",
-        to_agent: target,
+        from: "user",
         content,
-        thread_id: `temp-${Date.now()}`,
+        thread_id: null,
         timestamp: new Date().toISOString(),
-        read_by: "[]",
+        mentions: [],
       };
 
       // Immediately add to UI (optimistic update)
       mutate([...messages, optimisticMessage], { revalidate: false });
 
       try {
-        // Send to server
-        await sendMessage(target, content);
+        // Send to appropriate API based on channel vs DM
+        if (channel) {
+          await sendChannelMessage(target, content);
+        } else {
+          await sendMessage(target, content);
+        }
         // Revalidate to get the real message with server-assigned ID
         mutate();
       } catch (error) {
@@ -174,12 +216,77 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
         throw error; // Re-throw so MessageInput can show error
       }
     },
-    [target, messages, mutate]
+    [target, channel, messages, mutate]
+  );
+
+  // Handle slash commands
+  const handleCommand = useCallback(
+    async (command: SlashCommand): Promise<CommandResult> => {
+      const addSystemMessage = (content: string) => {
+        const sysMsg: SystemMessage = {
+          id: `sys-${Date.now()}`,
+          type: "system",
+          content,
+          timestamp: new Date().toISOString(),
+        };
+        setSystemMessages((prev) => [...prev, sysMsg]);
+      };
+
+      try {
+        switch (command) {
+          case "help": {
+            addSystemMessage(
+              "**Available Commands:**\n" +
+              "- `/help` - Show this help message\n" +
+              "- `/status` - Show team member status\n" +
+              "- `/standup` - Start a standup session (Alice → Bob → Charlie)"
+            );
+            return { command, success: true, message: "Help displayed" };
+          }
+
+          case "status": {
+            const { team } = await fetchTeamStatus();
+            if (team.length === 0) {
+              addSystemMessage("**Team Status:** No status updates available.");
+            } else {
+              const statusLines = team.map((s) => {
+                const status = s.status === "active" ? "🟢" : s.status === "idle" ? "🟡" : "⚫";
+                const working = s.working_on ? ` - ${s.working_on}` : "";
+                return `${status} **${s.agent_id}**: ${s.status}${working}`;
+              });
+              addSystemMessage("**Team Status:**\n" + statusLines.join("\n"));
+            }
+            return { command, success: true, message: "Status displayed" };
+          }
+
+          case "standup": {
+            addSystemMessage("**Starting standup session...** This may take a few minutes as each agent provides their update.");
+            const result = await startStandup();
+            if (result.success) {
+              addSystemMessage(
+                `**Standup Complete!**\n\nSession ID: ${result.session_id}\n\n${result.summary || "All agents have posted their updates."}`
+              );
+            } else {
+              addSystemMessage(`**Standup failed:** ${result.error || "Unknown error"}`);
+            }
+            return { command, success: true, message: "Standup initiated" };
+          }
+
+          default:
+            return { command, success: false, message: `Unknown command: ${command}` };
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "Command failed";
+        addSystemMessage(`**Error:** ${errorMsg}`);
+        return { command, success: false, message: errorMsg };
+      }
+    },
+    []
   );
 
   // Refresh when we get a new WebSocket message
   useEffect(() => {
-    if (lastMessage?.type === "message") {
+    if (lastMessage?.type === "message" || lastMessage?.type === "channel_message") {
       mutate();
     }
   }, [lastMessage, mutate]);
@@ -202,16 +309,26 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
               <span className="text-muted-foreground">No messages yet</span>
             </div>
           ) : (
-            <MessageList
-              messages={visibleMessages}
-              olderMessageCount={remainingOlderCount}
-              onLoadMore={handleLoadMore}
-            />
+            <>
+              <MessageList
+                messages={visibleMessages}
+                olderMessageCount={remainingOlderCount}
+                onLoadMore={handleLoadMore}
+              />
+              {systemMessages.map((sysMsg) => (
+                <div key={sysMsg.id} className="mt-4">
+                  <SystemMessageItem
+                    content={sysMsg.content}
+                    timestamp={sysMsg.timestamp}
+                  />
+                </div>
+              ))}
+            </>
           )}
         </ScrollArea>
       </div>
 
-      <MessageInput channel={channel} agent={agent} onSend={handleSend} />
+      <MessageInput channel={channel} agent={agent} onSend={handleSend} onCommand={handleCommand} />
     </div>
   );
 }

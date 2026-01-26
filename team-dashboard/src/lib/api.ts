@@ -1,9 +1,9 @@
-import type { Message, AgentStatus, RosterEntry, MessageFilter, MonitoringData } from "@/types";
+import type { Message, ChannelMessage, AgentStatus, RosterEntry, MessageFilter, MonitoringData } from "@/types";
 
 // Next.js rewrites /backend/* to team-server
 const API_BASE = "/backend";
 
-// Fetch messages with optional filters
+// Fetch messages with optional filters (for DMs)
 export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> {
   const params = new URLSearchParams();
   if (filter?.to_agent) params.set("to_agent", filter.to_agent);
@@ -19,9 +19,29 @@ export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> 
   return data.messages || [];
 }
 
-// Fetch messages for a channel (to_agent = channel name)
-export async function fetchChannelMessages(channel: string): Promise<Message[]> {
-  return fetchMessages({ to_agent: channel });
+// Fetch messages for a channel (uses new JSONL-based channel API)
+export async function fetchChannelMessages(channel: string): Promise<ChannelMessage[]> {
+  const res = await fetch(`${API_BASE}/channels/${channel}/messages`);
+  if (!res.ok) throw new Error(`Failed to fetch channel messages: ${channel}`);
+  const data = await res.json();
+  return data.messages || [];
+}
+
+// Send a message to a channel
+export async function sendChannelMessage(
+  channel: string,
+  content: string
+): Promise<{ success: boolean; message: ChannelMessage }> {
+  const res = await fetch(`${API_BASE}/channels/${channel}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: "Failed to send message" }));
+    throw new Error(error.error || "Failed to send channel message");
+  }
+  return res.json();
 }
 
 // Fetch DM messages (conversation between user and agent)
@@ -95,6 +115,37 @@ export async function triggerAgent(agent: string): Promise<{ success: boolean; e
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || "Failed to trigger agent");
+  }
+  return data;
+}
+
+// Fetch team status
+export async function fetchTeamStatus(): Promise<{
+  team: Array<{
+    agent_id: string;
+    status: string;
+    working_on: string | null;
+    updated_at: string;
+  }>;
+}> {
+  const res = await fetch(`${API_BASE}/status`);
+  if (!res.ok) throw new Error("Failed to fetch team status");
+  return res.json();
+}
+
+// Start a standup session
+export async function startStandup(): Promise<{
+  success: boolean;
+  session_id?: string;
+  summary?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${API_BASE}/standup/start`, {
+    method: "POST",
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to start standup");
   }
   return data;
 }

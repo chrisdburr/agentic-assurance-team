@@ -137,7 +137,7 @@ async function triggerAgent(agent: AgentId): Promise<void> {
         "claude",
         "-r",
         sessionId,
-        "You have new messages. Do this: 1) Call message_list with unread_only=true, 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.",
+        "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" + agent + ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.",
         "-p",
       ],
       {
@@ -383,4 +383,149 @@ export async function manualTrigger(agent: string): Promise<{ success: boolean; 
 
   await triggerAgent(agentId);
   return { success: true };
+}
+
+/**
+ * Trigger an agent for a channel @mention
+ * Uses a channel-specific prompt instructing the agent to use channel_read/channel_write
+ */
+export async function triggerAgentForChannel(
+  agent: string,
+  channel: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!AGENTS.includes(agent as AgentId)) {
+    return { success: false, error: `Unknown agent: ${agent}` };
+  }
+
+  const agentId = agent as AgentId;
+  const state = agentState[agentId];
+
+  // Check if agent has an active session (skip if busy)
+  if (state.activeProcess !== null) {
+    console.log(`[Dispatcher] ${agent} is busy, skipping channel trigger for #${channel}`);
+    return { success: false, error: `${agent} is busy` };
+  }
+
+  // Check cooldown
+  if (!canTrigger(agentId)) {
+    console.log(`[Dispatcher] ${agent} in cooldown, skipping channel trigger for #${channel}`);
+    return { success: false, error: `${agent} in cooldown` };
+  }
+
+  const sessionId = getSessionId(agentId);
+
+  console.log(`[Dispatcher] Triggering ${agent} for #${channel} @mention (session: ${sessionId})`);
+
+  state.lastTriggerTime = Date.now();
+  state.lastActiveStart = Date.now();
+  state.triggerCount++;
+
+  // Broadcast trigger event
+  if (broadcast) {
+    broadcast("agent_triggered", {
+      agent,
+      sessionId,
+      channel,
+      reason: "channel_mention",
+      timestamp: new Date().toISOString(),
+      triggerCount: state.triggerCount,
+    });
+  }
+
+  try {
+    const proc = Bun.spawn(
+      [
+        "claude",
+        "-r",
+        sessionId,
+        `You were @mentioned in the #${channel} channel. Do this:
+1. Call channel_read with channel="${channel}" and unread_only=true to see recent messages
+2. Read and understand the context of the conversation
+3. Call channel_write with channel="${channel}" and your response to participate in the discussion
+Remember: Use channel_write to respond in the channel, NOT message_send (that's for DMs).`,
+        "-p",
+      ],
+      {
+        cwd: PROJECT_ROOT,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          AGENT_ID: agent,
+        },
+      }
+    );
+
+    state.activeProcess = proc;
+
+    // Handle process completion
+    proc.exited.then((exitCode) => {
+      state.activeProcess = null;
+      state.lastExitCode = exitCode;
+      state.lastActiveStart = null;
+
+      console.log(`[Dispatcher] ${agent} channel session ended (exit code: ${exitCode})`);
+
+      if (broadcast) {
+        broadcast("agent_session_ended", {
+          agent,
+          sessionId,
+          channel,
+          exitCode,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    });
+
+    // Collect stdout for logging
+    if (proc.stdout) {
+      const reader = proc.stdout.getReader();
+      (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = new TextDecoder().decode(value);
+            console.log(`[${agent}] ${text.trim()}`);
+          }
+        } catch {
+          // Stream closed
+        }
+      })();
+    }
+
+    // Collect stderr for logging
+    if (proc.stderr) {
+      const reader = proc.stderr.getReader();
+      (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = new TextDecoder().decode(value);
+            console.error(`[${agent}:err] ${text.trim()}`);
+          }
+        } catch {
+          // Stream closed
+        }
+      })();
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error(`[Dispatcher] Failed to trigger ${agent} for channel:`, error);
+    state.activeProcess = null;
+    state.lastActiveStart = null;
+
+    if (broadcast) {
+      broadcast("agent_trigger_failed", {
+        agent,
+        channel,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
