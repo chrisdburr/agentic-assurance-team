@@ -143,6 +143,14 @@ export async function startStandup(): Promise<{
   const res = await fetch(`${API_BASE}/standup/start`, {
     method: "POST",
   });
+
+  // Handle non-JSON responses gracefully
+  const contentType = res.headers.get("content-type");
+  if (!contentType?.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(text || "Server returned non-JSON response");
+  }
+
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || "Failed to start standup");
