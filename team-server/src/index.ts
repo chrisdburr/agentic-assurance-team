@@ -229,6 +229,17 @@ function runHttpServer() {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
+  // Broadcast endpoint for MCP processes to notify WebSocket clients
+  app.post("/api/broadcast", async (c) => {
+    try {
+      const { type, data } = await c.req.json();
+      broadcast(type, data);
+      return c.json({ success: true });
+    } catch (error) {
+      return c.json({ success: false }, 400);
+    }
+  });
+
   // Dispatcher endpoints
   app.get("/api/dispatcher/status", (c) => {
     return c.json(getDispatcherStatus());

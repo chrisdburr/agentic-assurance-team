@@ -203,13 +203,24 @@ export async function handleToolCall(
         thread_id?: string;
       };
       const messageId = sendMessage(agentId, to, content, thread_id);
-      return {
+      const result = {
         success: true,
         message_id: messageId,
         from: agentId,
         to,
         thread_id: thread_id || messageId,
+        timestamp: new Date().toISOString(),
       };
+
+      // Notify HTTP server to broadcast (fire and forget)
+      const webPort = process.env.WEB_PORT || "3030";
+      fetch(`http://localhost:${webPort}/api/broadcast`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "message", data: result }),
+      }).catch(() => {}); // Ignore errors - server may not be running
+
+      return result;
     }
 
     case "message_list": {

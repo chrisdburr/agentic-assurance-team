@@ -135,12 +135,10 @@ async function triggerAgent(agent: AgentId): Promise<void> {
     const proc = Bun.spawn(
       [
         "claude",
-        "--agent",
-        agent,
         "-r",
         sessionId,
+        "You have new messages. Do this: 1) Call message_list with unread_only=true, 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.",
         "-p",
-        "Check your inbox and respond to new messages. Use message_list with unread_only=true to see unread messages, then respond appropriately.",
       ],
       {
         cwd: PROJECT_ROOT,

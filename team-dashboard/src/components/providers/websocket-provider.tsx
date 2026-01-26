@@ -34,9 +34,9 @@ export function WebSocketProvider({ children }: Props) {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    // Determine WebSocket URL based on current location
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    // Use configured WebSocket URL or fall back to same-origin /ws
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ||
+      `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
     try {
       const ws = new WebSocket(wsUrl);
