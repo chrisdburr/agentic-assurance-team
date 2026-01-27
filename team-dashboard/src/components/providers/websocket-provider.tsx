@@ -53,7 +53,7 @@ export function WebSocketProvider({ children }: Props) {
           console.log("[WS] Message:", data);
           setLastMessage(data);
 
-          // Track active agents
+          // Track active agents for typing indicator
           if (data.type === "agent_triggered" && data.data) {
             const agentData = data.data as { agent?: string };
             if (agentData.agent) {
@@ -68,6 +68,25 @@ export function WebSocketProvider({ children }: Props) {
             if (agentData.agent) {
               setActiveAgents((prev) =>
                 prev.filter((a) => a !== agentData.agent)
+              );
+            }
+          }
+
+          // Hide typing indicator when we receive a message FROM an agent
+          // This is more reliable than waiting for agent_session_ended
+          if (data.type === "message" && data.data) {
+            const msgData = data.data as { from?: string };
+            if (msgData.from && msgData.from !== "user") {
+              setActiveAgents((prev) =>
+                prev.filter((a) => a !== msgData.from)
+              );
+            }
+          }
+          if (data.type === "channel_message" && data.data) {
+            const msgData = data.data as { message?: { from?: string } };
+            if (msgData.message?.from && msgData.message.from !== "user") {
+              setActiveAgents((prev) =>
+                prev.filter((a) => a !== msgData.message!.from)
               );
             }
           }

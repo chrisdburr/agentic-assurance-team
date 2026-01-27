@@ -1,15 +1,27 @@
 "use client";
 
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  fetchChannelMessages,
+  fetchDMMessages,
+  fetchTeamStatus,
+  sendChannelMessage,
+  sendMessage,
+  startStandup,
+} from "@/lib/api";
+import { filterRecentMessages } from "@/lib/message-utils";
+import type { ChannelMessage, DisplayMessage, Message } from "@/types";
+import {
+  type CommandResult,
+  MessageInput,
+  type SlashCommand,
+} from "./message-input";
 import { MessageList } from "./message-list";
-import { MessageInput, type SlashCommand, type CommandResult } from "./message-input";
 import { ScrollToTopButton } from "./scroll-to-top-button";
 import { SystemMessageItem } from "./system-message-item";
-import { fetchChannelMessages, fetchDMMessages, sendMessage, sendChannelMessage, fetchTeamStatus, startStandup } from "@/lib/api";
-import { filterRecentMessages } from "@/lib/message-utils";
-import type { Message, ChannelMessage, DisplayMessage } from "@/types";
+import { TypingIndicator } from "./typing-indicator";
 
 // Convert DM Message to DisplayMessage
 function normalizeMessage(m: Message): DisplayMessage {
@@ -34,6 +46,7 @@ function normalizeChannelMessage(m: ChannelMessage): DisplayMessage {
     mentions: m.mentions,
   };
 }
+
 import { useWebSocket } from "@/hooks/use-websocket";
 
 // System message type for slash command results
@@ -57,10 +70,9 @@ async function fetcher(key: string): Promise<DisplayMessage[]> {
   if (type === "channel") {
     const messages = await fetchChannelMessages(id);
     return messages.map(normalizeChannelMessage);
-  } else {
-    const messages = await fetchDMMessages(id);
-    return messages.map(normalizeMessage);
   }
+  const messages = await fetchDMMessages(id);
+  return messages.map(normalizeMessage);
 }
 
 export function ChatArea({ channel, agent, title }: ChatAreaProps) {
@@ -74,7 +86,7 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
 
   // Subscribe to WebSocket events
-  const { lastMessage, isConnected } = useWebSocket();
+  const { lastMessage, isConnected, activeAgents } = useWebSocket();
 
   // Use polling fallback (5s) when WebSocket is disconnected
   const {
@@ -107,10 +119,13 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const isInitialLoad = useRef(true);
+  const isNearBottomRef = useRef(true);
 
   // Get the actual scrollable viewport inside ScrollArea
   const getViewport = useCallback(() => {
-    return scrollRef.current?.querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement | null;
+    return scrollRef.current?.querySelector(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLElement | null;
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -148,13 +163,19 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
     }
   }, [visibleMessages.length, scrollToBottom]);
 
-  // Track scroll position for scroll-to-top button
+  // Track scroll position for scroll-to-top button and auto-scroll
   useEffect(() => {
     const viewport = getViewport();
-    if (!viewport) return;
+    if (!viewport) {
+      return;
+    }
 
     const handleScroll = () => {
       setShowScrollToTop(viewport.scrollTop > 200);
+      // Track if user is near bottom for auto-scroll behavior
+      const distanceFromBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      isNearBottomRef.current = distanceFromBottom < 100;
     };
 
     viewport.addEventListener("scroll", handleScroll);
@@ -167,7 +188,9 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
     const currentVisible = effectiveShowOlderCount;
 
     if (!viewport) {
-      setShowOlderCount(Math.min(currentVisible + LOAD_MORE_BATCH, older.length));
+      setShowOlderCount(
+        Math.min(currentVisible + LOAD_MORE_BATCH, older.length)
+      );
       return;
     }
 
@@ -198,6 +221,9 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
       // Immediately add to UI (optimistic update)
       mutate([...messages, optimisticMessage], { revalidate: false });
 
+      // Always scroll to bottom when user sends a message
+      setTimeout(() => scrollToBottom(), 50);
+
       try {
         // Send to appropriate API based on channel vs DM
         if (channel) {
@@ -216,7 +242,7 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
         throw error; // Re-throw so MessageInput can show error
       }
     },
-    [target, channel, messages, mutate]
+    [target, channel, messages, mutate, scrollToBottom]
   );
 
   // Handle slash commands
@@ -237,9 +263,9 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
           case "help": {
             addSystemMessage(
               "**Available Commands:**\n" +
-              "- `/help` - Show this help message\n" +
-              "- `/status` - Show team member status\n" +
-              "- `/standup` - Start a standup session (Alice → Bob → Charlie)"
+                "- `/help` - Show this help message\n" +
+                "- `/status` - Show team member status\n" +
+                "- `/standup` - Start a standup session (Alice → Bob → Charlie)"
             );
             return { command, success: true, message: "Help displayed" };
           }
@@ -250,7 +276,12 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
               addSystemMessage("**Team Status:** No status updates available.");
             } else {
               const statusLines = team.map((s) => {
-                const status = s.status === "active" ? "🟢" : s.status === "idle" ? "🟡" : "⚫";
+                const status =
+                  s.status === "active"
+                    ? "🟢"
+                    : s.status === "idle"
+                      ? "🟡"
+                      : "⚫";
                 const working = s.working_on ? ` - ${s.working_on}` : "";
                 return `${status} **${s.agent_id}**: ${s.status}${working}`;
               });
@@ -260,20 +291,28 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
           }
 
           case "standup": {
-            addSystemMessage("**Starting standup session...** Each agent will respond in sequence. Watch the channel for updates.");
+            addSystemMessage(
+              "**Starting standup session...** Each agent will respond in sequence. Watch the channel for updates."
+            );
             const result = await startStandup();
             if (result.success) {
               addSystemMessage(
                 `**Standup initiated.** Session ID: \`${result.session_id}\`\n\nAgents will post their updates to the channel: Alice, then Bob, then Charlie.`
               );
             } else {
-              addSystemMessage(`**Standup failed:** ${result.error || "Unknown error"}`);
+              addSystemMessage(
+                `**Standup failed:** ${result.error || "Unknown error"}`
+              );
             }
             return { command, success: true, message: "Standup initiated" };
           }
 
           default:
-            return { command, success: false, message: `Unknown command: ${command}` };
+            return {
+              command,
+              success: false,
+              message: `Unknown command: ${command}`,
+            };
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : "Command failed";
@@ -284,28 +323,35 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
     []
   );
 
-  // Refresh when we get a new WebSocket message
+  // Refresh when we get a new WebSocket message and auto-scroll if near bottom
   useEffect(() => {
-    if (lastMessage?.type === "message" || lastMessage?.type === "channel_message") {
+    if (
+      lastMessage?.type === "message" ||
+      lastMessage?.type === "channel_message"
+    ) {
       mutate();
+      // Auto-scroll to bottom if user was already near bottom
+      if (isNearBottomRef.current) {
+        setTimeout(() => scrollToBottom(), 50);
+      }
     }
-  }, [lastMessage, mutate]);
+  }, [lastMessage, mutate, scrollToBottom]);
 
   return (
-    <div className="flex flex-1 flex-col h-full">
+    <div className="flex h-full flex-1 flex-col">
       <div className="border-b px-6 py-3">
-        <h2 className="text-lg font-semibold">{title}</h2>
+        <h2 className="font-semibold text-lg">{title}</h2>
       </div>
 
-      <div className="relative flex-1 min-h-0">
+      <div className="relative min-h-0 flex-1">
         <ScrollToTopButton onClick={scrollToTop} visible={showScrollToTop} />
-        <ScrollArea ref={scrollRef} className="h-full px-6 py-4">
+        <ScrollArea className="h-full px-6 py-4" ref={scrollRef}>
           {isLoading ? (
-            <div className="flex items-center justify-center h-32">
+            <div className="flex h-32 items-center justify-center">
               <span className="text-muted-foreground">Loading messages...</span>
             </div>
           ) : messages.length === 0 ? (
-            <div className="flex items-center justify-center h-32">
+            <div className="flex h-32 items-center justify-center">
               <span className="text-muted-foreground">No messages yet</span>
             </div>
           ) : (
@@ -316,19 +362,29 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
                 onLoadMore={handleLoadMore}
               />
               {systemMessages.map((sysMsg) => (
-                <div key={sysMsg.id} className="mt-4">
+                <div className="mt-4" key={sysMsg.id}>
                   <SystemMessageItem
                     content={sysMsg.content}
                     timestamp={sysMsg.timestamp}
                   />
                 </div>
               ))}
+              {activeAgents.length > 0 && (
+                <div className="mt-6">
+                  <TypingIndicator agents={activeAgents} />
+                </div>
+              )}
             </>
           )}
         </ScrollArea>
       </div>
 
-      <MessageInput channel={channel} agent={agent} onSend={handleSend} onCommand={handleCommand} />
+      <MessageInput
+        agent={agent}
+        channel={channel}
+        onCommand={handleCommand}
+        onSend={handleSend}
+      />
     </div>
   );
 }

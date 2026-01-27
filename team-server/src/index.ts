@@ -4,41 +4,40 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { Hono } from "hono";
 import { serve } from "bun";
+import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
-import { toolDefinitions, handleToolCall } from "./tools.js";
+import {
+  appendChannelMessage,
+  type ChannelMessage,
+  isValidChannel,
+  listChannels,
+  onChannelMessage,
+  readChannelMessages,
+} from "./channels.js";
 import {
   getAllMessages,
-  getMessagesByToAgent,
   getMessagesByFromAgent,
-  getThread,
+  getMessagesByToAgent,
   getStandupsByDate,
   getStandupsBySession,
-  getTodayStandups,
-  getTeamStatus,
   getTeamRoster,
+  getTeamStatus,
+  getThread,
+  getTodayStandups,
   getUnreadMessages,
   sendMessage,
 } from "./db.js";
 import {
-  initDispatcher,
   getDispatcherStatus,
-  manualTrigger,
-  triggerAgentForChannel,
-  startStandupQueue,
-  onStandupChannelMessage,
   getStandupQueueStatus,
+  initDispatcher,
+  manualTrigger,
+  onStandupChannelMessage,
+  startStandupQueue,
+  triggerAgentForChannel,
 } from "./dispatcher.js";
-import {
-  readChannelMessages,
-  appendChannelMessage,
-  listChannels,
-  isValidChannel,
-  parseMentions,
-  onChannelMessage,
-  type ChannelMessage,
-} from "./channels.js";
+import { handleToolCall, toolDefinitions } from "./tools.js";
 
 // Parse @mentions from message content (for DMs - channels use channels.ts version)
 // Supports @alice, @bob, @charlie, @team (expands to all three)
@@ -62,24 +61,33 @@ function parseDMMentions(content: string): string[] {
 }
 
 // Trigger mentioned agents for a channel message
-async function triggerMentionedAgents(channel: string, message: ChannelMessage): Promise<void> {
+async function triggerMentionedAgents(
+  channel: string,
+  message: ChannelMessage
+): Promise<void> {
   for (const agentId of message.mentions) {
     // Only trigger valid agents
     if (["alice", "bob", "charlie"].includes(agentId)) {
-      console.log(`[Channel] Triggering ${agentId} for @mention in #${channel}`);
+      console.log(
+        `[Channel] Triggering ${agentId} for @mention in #${channel}`
+      );
       await triggerAgentForChannel(agentId, channel);
     }
   }
 }
 
-const WEB_PORT = parseInt(process.env.WEB_PORT || "3030");
+const WEB_PORT = Number.parseInt(process.env.WEB_PORT || "3030");
 const isMcpMode = process.argv.includes("--mcp");
 
 // WebSocket clients for real-time updates
 const wsClients = new Set<{ send: (data: string) => void }>();
 
 function broadcast(event: string, data: unknown) {
-  const message = JSON.stringify({ type: event, data, timestamp: new Date().toISOString() });
+  const message = JSON.stringify({
+    type: event,
+    data,
+    timestamp: new Date().toISOString(),
+  });
   for (const client of wsClients) {
     try {
       client.send(message);
@@ -170,7 +178,7 @@ function runHttpServer() {
 
   // API Routes
   app.get("/api/messages", (c) => {
-    const limit = parseInt(c.req.query("limit") || "100");
+    const limit = Number.parseInt(c.req.query("limit") || "100");
     const toAgent = c.req.query("to_agent");
     const fromAgent = c.req.query("from_agent");
 
@@ -186,7 +194,7 @@ function runHttpServer() {
   });
 
   // POST /api/messages - Send a new message
-  const MAX_CONTENT_LENGTH = 10000;
+  const MAX_CONTENT_LENGTH = 10_000;
   app.post("/api/messages", async (c) => {
     try {
       const body = await c.req.json();
@@ -194,13 +202,25 @@ function runHttpServer() {
 
       // Validation
       if (!to || typeof to !== "string") {
-        return c.json({ success: false, error: "Missing or invalid 'to' field" }, 400);
+        return c.json(
+          { success: false, error: "Missing or invalid 'to' field" },
+          400
+        );
       }
       if (!content || typeof content !== "string" || !content.trim()) {
-        return c.json({ success: false, error: "Missing or invalid 'content' field" }, 400);
+        return c.json(
+          { success: false, error: "Missing or invalid 'content' field" },
+          400
+        );
       }
       if (content.length > MAX_CONTENT_LENGTH) {
-        return c.json({ success: false, error: `Content exceeds maximum length of ${MAX_CONTENT_LENGTH}` }, 400);
+        return c.json(
+          {
+            success: false,
+            error: `Content exceeds maximum length of ${MAX_CONTENT_LENGTH}`,
+          },
+          400
+        );
       }
 
       // Parse @mentions from content (for DMs)
@@ -208,7 +228,13 @@ function runHttpServer() {
 
       // Always use "user" for PWA messages - prevents impersonation
       const fromAgent = "user";
-      const messageId = sendMessage(fromAgent, to, content, thread_id, mentions);
+      const messageId = sendMessage(
+        fromAgent,
+        to,
+        content,
+        thread_id,
+        mentions
+      );
 
       const result = {
         success: true,
@@ -222,6 +248,14 @@ function runHttpServer() {
 
       // Broadcast to WebSocket clients
       broadcast("message", result);
+
+      // Immediately trigger the recipient agent if it's an AI agent
+      // This provides faster response than waiting for polling
+      if (["alice", "bob", "charlie"].includes(to)) {
+        manualTrigger(to).catch((err) => {
+          console.error(`[API] Failed to trigger ${to}:`, err);
+        });
+      }
 
       return c.json(result, 201);
     } catch (error) {
@@ -246,7 +280,10 @@ function runHttpServer() {
   app.get("/api/standups", (c) => {
     const date = c.req.query("date");
     const standups = date ? getStandupsByDate(date) : getTodayStandups();
-    return c.json({ date: date || new Date().toISOString().split("T")[0], standups });
+    return c.json({
+      date: date || new Date().toISOString().split("T")[0],
+      standups,
+    });
   });
 
   app.get("/api/standups/:date", (c) => {
@@ -278,7 +315,11 @@ function runHttpServer() {
 
       // Check for standup queue advancement when agent posts to channel
       if (type === "channel_message" && data?.channel && data?.message) {
-        onStandupChannelMessage(data.channel, data.message.from, data.message.content);
+        onStandupChannelMessage(
+          data.channel,
+          data.message.from,
+          data.message.content
+        );
       }
 
       return c.json({ success: true });
@@ -307,11 +348,14 @@ function runHttpServer() {
       // Check if a standup is already in progress
       const existingQueue = getStandupQueueStatus();
       if (existingQueue) {
-        return c.json({
-          success: false,
-          error: "A standup session is already in progress",
-          session_id: existingQueue.sessionId,
-        }, 400);
+        return c.json(
+          {
+            success: false,
+            error: "A standup session is already in progress",
+            session_id: existingQueue.sessionId,
+          },
+          400
+        );
       }
 
       const channel = "team"; // Could be parameterized in the future
@@ -321,7 +365,8 @@ function runHttpServer() {
         success: true,
         session_id: sessionId,
         channel,
-        message: "Standup session started. Agents will respond sequentially in the channel.",
+        message:
+          "Standup session started. Agents will respond sequentially in the channel.",
         agents: ["alice", "bob", "charlie"],
       });
     } catch (error) {
@@ -394,7 +439,7 @@ function runHttpServer() {
   // Get messages from a channel
   app.get("/api/channels/:channel/messages", (c) => {
     const channel = c.req.param("channel");
-    const limit = parseInt(c.req.query("limit") || "50");
+    const limit = Number.parseInt(c.req.query("limit") || "50");
 
     if (!isValidChannel(channel)) {
       return c.json({ error: `Invalid channel: ${channel}` }, 400);
@@ -421,7 +466,10 @@ function runHttpServer() {
       }
 
       if (content.length > MAX_CONTENT_LENGTH) {
-        return c.json({ error: `Content exceeds maximum length of ${MAX_CONTENT_LENGTH}` }, 400);
+        return c.json(
+          { error: `Content exceeds maximum length of ${MAX_CONTENT_LENGTH}` },
+          400
+        );
       }
 
       // Always use "user" for dashboard messages

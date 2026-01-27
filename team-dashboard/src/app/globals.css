@@ -159,6 +159,11 @@
   --shadow-2xl: 0px 6px 15px 0px hsl(0 0% 0% / 0.63);
 }
 
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
