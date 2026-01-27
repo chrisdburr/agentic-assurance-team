@@ -275,6 +275,12 @@ function runHttpServer() {
     try {
       const { type, data } = await c.req.json();
       broadcast(type, data);
+
+      // Check for standup queue advancement when agent posts to channel
+      if (type === "channel_message" && data?.channel && data?.message) {
+        onStandupChannelMessage(data.channel, data.message.from, data.message.content);
+      }
+
       return c.json({ success: true });
     } catch (error) {
       return c.json({ success: false }, 400);
