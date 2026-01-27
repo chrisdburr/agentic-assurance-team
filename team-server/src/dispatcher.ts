@@ -7,17 +7,24 @@
  * Only triggers if there are NEW messages since last trigger (prevents re-processing).
  */
 
-import { getUnreadMessages, postStandup } from "./db.js";
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
+import { getUnreadMessages, postStandup } from "./db.js";
+import { logger } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
 
 // Configuration from environment
-const POLL_INTERVAL = parseInt(process.env.DISPATCHER_POLL_INTERVAL || "5000");
-const COOLDOWN = parseInt(process.env.DISPATCHER_COOLDOWN || "60000");
+const POLL_INTERVAL = Number.parseInt(
+  process.env.DISPATCHER_POLL_INTERVAL || "5000",
+  10
+);
+const COOLDOWN = Number.parseInt(
+  process.env.DISPATCHER_COOLDOWN || "60000",
+  10
+);
 const DISPATCHER_ENABLED = process.env.DISPATCHER_ENABLED !== "false";
 
 // Agent configuration
@@ -46,9 +53,30 @@ interface AgentState {
 
 // State tracking per agent
 const agentState: Record<AgentId, AgentState> = {
-  alice: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0, lastExitCode: null, lastActiveStart: null },
-  bob: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0, lastExitCode: null, lastActiveStart: null },
-  charlie: { lastTriggerTime: 0, lastSeenMessageTime: "", activeProcess: null, triggerCount: 0, lastExitCode: null, lastActiveStart: null },
+  alice: {
+    lastTriggerTime: 0,
+    lastSeenMessageTime: "",
+    activeProcess: null,
+    triggerCount: 0,
+    lastExitCode: null,
+    lastActiveStart: null,
+  },
+  bob: {
+    lastTriggerTime: 0,
+    lastSeenMessageTime: "",
+    activeProcess: null,
+    triggerCount: 0,
+    lastExitCode: null,
+    lastActiveStart: null,
+  },
+  charlie: {
+    lastTriggerTime: 0,
+    lastSeenMessageTime: "",
+    activeProcess: null,
+    triggerCount: 0,
+    lastExitCode: null,
+    lastActiveStart: null,
+  },
 };
 
 // Track dispatcher state
@@ -130,7 +158,7 @@ async function triggerAgent(agent: AgentId): Promise<void> {
   const sessionId = getSessionId(agent);
   const state = agentState[agent];
 
-  console.log(`[Dispatcher] Triggering ${agent} (session: ${sessionId})`);
+  logger.info("Dispatcher", `Triggering ${agent}`, { sessionId });
 
   state.lastTriggerTime = Date.now();
   state.lastActiveStart = Date.now();
@@ -152,7 +180,9 @@ async function triggerAgent(agent: AgentId): Promise<void> {
         "claude",
         "-r",
         sessionId,
-        "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" + agent + ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.",
+        "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" +
+          agent +
+          ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.",
         "-p",
       ],
       {
@@ -174,7 +204,7 @@ async function triggerAgent(agent: AgentId): Promise<void> {
       state.lastExitCode = exitCode;
       state.lastActiveStart = null;
 
-      console.log(`[Dispatcher] ${agent} session ended (exit code: ${exitCode})`);
+      logger.info("Dispatcher", `${agent} session ended`, { exitCode });
 
       if (broadcast) {
         broadcast("agent_session_ended", {
@@ -193,9 +223,11 @@ async function triggerAgent(agent: AgentId): Promise<void> {
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              break;
+            }
             const text = new TextDecoder().decode(value);
-            console.log(`[${agent}] ${text.trim()}`);
+            logger.debug(agent, text.trim());
           }
         } catch {
           // Stream closed
@@ -210,9 +242,11 @@ async function triggerAgent(agent: AgentId): Promise<void> {
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              break;
+            }
             const text = new TextDecoder().decode(value);
-            console.error(`[${agent}:err] ${text.trim()}`);
+            logger.error(agent, text.trim());
           }
         } catch {
           // Stream closed
@@ -220,7 +254,9 @@ async function triggerAgent(agent: AgentId): Promise<void> {
       })();
     }
   } catch (error) {
-    console.error(`[Dispatcher] Failed to trigger ${agent}:`, error);
+    logger.error("Dispatcher", `Failed to trigger ${agent}`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
     state.activeProcess = null;
 
     if (broadcast) {
@@ -241,7 +277,9 @@ async function checkAndTrigger(): Promise<void> {
     try {
       const { count, messages } = getUnreadMessages(agent);
 
-      if (count === 0) continue;
+      if (count === 0) {
+        continue;
+      }
 
       const state = agentState[agent];
 
@@ -260,13 +298,21 @@ async function checkAndTrigger(): Promise<void> {
       }
 
       if (!canTrigger(agent)) {
-        const remaining = Math.max(0, COOLDOWN - (Date.now() - state.lastTriggerTime));
+        const remaining = Math.max(
+          0,
+          COOLDOWN - (Date.now() - state.lastTriggerTime)
+        );
         if (remaining > 0 && state.activeProcess === null) {
-          console.log(
-            `[Dispatcher] ${agent} has ${count} NEW unread but in cooldown (${Math.ceil(remaining / 1000)}s remaining)`
+          logger.debug(
+            "Dispatcher",
+            `${agent} has ${count} NEW unread but in cooldown`,
+            { remainingSeconds: Math.ceil(remaining / 1000) }
           );
         } else if (state.activeProcess !== null) {
-          console.log(`[Dispatcher] ${agent} has ${count} NEW unread but session is active`);
+          logger.debug(
+            "Dispatcher",
+            `${agent} has ${count} NEW unread but session is active`
+          );
         }
         continue;
       }
@@ -274,10 +320,14 @@ async function checkAndTrigger(): Promise<void> {
       // Update lastSeenMessageTime before triggering
       state.lastSeenMessageTime = newestMessageTime;
 
-      console.log(`[Dispatcher] ${agent} has ${count} NEW unread message(s) from: ${messages.map((m) => m.from_agent).join(", ")}`);
+      logger.info("Dispatcher", `${agent} has ${count} NEW unread message(s)`, {
+        from: messages.map((m) => m.from_agent).join(", "),
+      });
       await triggerAgent(agent);
     } catch (error) {
-      console.error(`[Dispatcher] Error checking ${agent}:`, error);
+      logger.error("Dispatcher", `Error checking ${agent}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }
@@ -289,22 +339,27 @@ export function initDispatcher(
   broadcastFn: (event: string, data: unknown) => void
 ): boolean {
   if (!DISPATCHER_ENABLED) {
-    console.log("[Dispatcher] Disabled via DISPATCHER_ENABLED=false");
+    logger.info("Dispatcher", "Disabled via DISPATCHER_ENABLED=false");
     return false;
   }
 
   broadcast = broadcastFn;
   dispatcherEnabled = true;
 
-  console.log(
-    `[Dispatcher] Initialized (poll: ${POLL_INTERVAL}ms, cooldown: ${COOLDOWN}ms)`
-  );
+  logger.info("Dispatcher", "Initialized", {
+    pollInterval: POLL_INTERVAL,
+    cooldown: COOLDOWN,
+  });
 
   // Start polling
   pollIntervalId = setInterval(checkAndTrigger, POLL_INTERVAL);
 
   // Broadcast dispatcher status
-  broadcast("dispatcher_status", { enabled: true, pollInterval: POLL_INTERVAL, cooldown: COOLDOWN });
+  broadcast("dispatcher_status", {
+    enabled: true,
+    pollInterval: POLL_INTERVAL,
+    cooldown: COOLDOWN,
+  });
 
   return true;
 }
@@ -323,7 +378,7 @@ export function stopDispatcher(): void {
     broadcast("dispatcher_status", { enabled: false });
   }
 
-  console.log("[Dispatcher] Stopped");
+  logger.info("Dispatcher", "Stopped");
 }
 
 /**
@@ -333,42 +388,54 @@ export function getDispatcherStatus(): {
   enabled: boolean;
   pollInterval: number;
   cooldown: number;
-  agents: Record<string, {
-    lastTrigger: string | null;
-    lastSeenMessage: string | null;
-    active: boolean;
-    triggerCount: number;
-    health: HealthStatus;
-    lastExitCode: number | null;
-    activeForMs: number | null;
-    cooldownRemainingMs: number | null;
-  }>;
+  agents: Record<
+    string,
+    {
+      lastTrigger: string | null;
+      lastSeenMessage: string | null;
+      active: boolean;
+      triggerCount: number;
+      health: HealthStatus;
+      lastExitCode: number | null;
+      activeForMs: number | null;
+      cooldownRemainingMs: number | null;
+    }
+  >;
 } {
-  const agents: Record<string, {
-    lastTrigger: string | null;
-    lastSeenMessage: string | null;
-    active: boolean;
-    triggerCount: number;
-    health: HealthStatus;
-    lastExitCode: number | null;
-    activeForMs: number | null;
-    cooldownRemainingMs: number | null;
-  }> = {};
+  const agents: Record<
+    string,
+    {
+      lastTrigger: string | null;
+      lastSeenMessage: string | null;
+      active: boolean;
+      triggerCount: number;
+      health: HealthStatus;
+      lastExitCode: number | null;
+      activeForMs: number | null;
+      cooldownRemainingMs: number | null;
+    }
+  > = {};
 
   const now = Date.now();
 
   for (const agent of AGENTS) {
     const state = agentState[agent];
-    const cooldownRemaining = Math.max(0, COOLDOWN - (now - state.lastTriggerTime));
+    const cooldownRemaining = Math.max(
+      0,
+      COOLDOWN - (now - state.lastTriggerTime)
+    );
 
     agents[agent] = {
-      lastTrigger: state.lastTriggerTime ? new Date(state.lastTriggerTime).toISOString() : null,
+      lastTrigger: state.lastTriggerTime
+        ? new Date(state.lastTriggerTime).toISOString()
+        : null,
       lastSeenMessage: state.lastSeenMessageTime || null,
       active: state.activeProcess !== null,
       triggerCount: state.triggerCount,
       health: getAgentHealth(agent),
       lastExitCode: state.lastExitCode,
-      activeForMs: state.lastActiveStart !== null ? now - state.lastActiveStart : null,
+      activeForMs:
+        state.lastActiveStart !== null ? now - state.lastActiveStart : null,
       cooldownRemainingMs: cooldownRemaining > 0 ? cooldownRemaining : null,
     };
   }
@@ -384,7 +451,9 @@ export function getDispatcherStatus(): {
 /**
  * Manually trigger an agent (bypasses cooldown check)
  */
-export async function manualTrigger(agent: string): Promise<{ success: boolean; error?: string }> {
+export async function manualTrigger(
+  agent: string
+): Promise<{ success: boolean; error?: string }> {
   if (!AGENTS.includes(agent as AgentId)) {
     return { success: false, error: `Unknown agent: ${agent}` };
   }
@@ -417,19 +486,27 @@ export async function triggerAgentForChannel(
 
   // Check if agent has an active session (skip if busy)
   if (state.activeProcess !== null) {
-    console.log(`[Dispatcher] ${agent} is busy, skipping channel trigger for #${channel}`);
+    logger.debug(
+      "Dispatcher",
+      `${agent} is busy, skipping channel trigger for #${channel}`
+    );
     return { success: false, error: `${agent} is busy` };
   }
 
   // Check cooldown
   if (!canTrigger(agentId)) {
-    console.log(`[Dispatcher] ${agent} in cooldown, skipping channel trigger for #${channel}`);
+    logger.debug(
+      "Dispatcher",
+      `${agent} in cooldown, skipping channel trigger for #${channel}`
+    );
     return { success: false, error: `${agent} in cooldown` };
   }
 
   const sessionId = getSessionId(agentId);
 
-  console.log(`[Dispatcher] Triggering ${agent} for #${channel} @mention (session: ${sessionId})`);
+  logger.info("Dispatcher", `Triggering ${agent} for #${channel} @mention`, {
+    sessionId,
+  });
 
   state.lastTriggerTime = Date.now();
   state.lastActiveStart = Date.now();
@@ -479,7 +556,9 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
       state.lastExitCode = exitCode;
       state.lastActiveStart = null;
 
-      console.log(`[Dispatcher] ${agent} channel session ended (exit code: ${exitCode})`);
+      logger.info("Dispatcher", `${agent} channel session ended`, {
+        exitCode,
+      });
 
       if (broadcast) {
         broadcast("agent_session_ended", {
@@ -499,9 +578,11 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              break;
+            }
             const text = new TextDecoder().decode(value);
-            console.log(`[${agent}] ${text.trim()}`);
+            logger.debug(agent, text.trim());
           }
         } catch {
           // Stream closed
@@ -516,9 +597,11 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              break;
+            }
             const text = new TextDecoder().decode(value);
-            console.error(`[${agent}:err] ${text.trim()}`);
+            logger.error(agent, text.trim());
           }
         } catch {
           // Stream closed
@@ -528,7 +611,9 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
 
     return { success: true };
   } catch (error) {
-    console.error(`[Dispatcher] Failed to trigger ${agent} for channel:`, error);
+    logger.error("Dispatcher", `Failed to trigger ${agent} for channel`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
     state.activeProcess = null;
     state.lastActiveStart = null;
 
@@ -541,14 +626,20 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
       });
     }
 
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
 /**
  * Start a standup queue - triggers agents sequentially via their resumed sessions
  */
-export function startStandupQueue(channel: string, agents: AgentId[] = [...AGENTS]): string {
+export function startStandupQueue(
+  channel: string,
+  agents: AgentId[] = [...AGENTS]
+): string {
   if (activeStandupQueue) {
     throw new Error("A standup session is already in progress");
   }
@@ -563,7 +654,10 @@ export function startStandupQueue(channel: string, agents: AgentId[] = [...AGENT
     startedAt: new Date().toISOString(),
   };
 
-  console.log(`[Dispatcher] Starting standup session ${sessionId} in #${channel}`);
+  logger.info(
+    "Dispatcher",
+    `Starting standup session ${sessionId} in #${channel}`
+  );
 
   if (broadcast) {
     broadcast("standup_session_start", {
@@ -591,7 +685,7 @@ function triggerNextStandupAgent(): void {
   if (activeStandupQueue.pendingAgents.length === 0) {
     // Standup complete
     const session = activeStandupQueue;
-    console.log(`[Dispatcher] Standup session ${session.sessionId} complete`);
+    logger.info("Dispatcher", `Standup session ${session.sessionId} complete`);
 
     if (broadcast) {
       broadcast("standup_session_complete", {
@@ -609,15 +703,26 @@ function triggerNextStandupAgent(): void {
   const nextAgent = activeStandupQueue.pendingAgents.shift()!;
   activeStandupQueue.currentAgent = nextAgent;
 
-  console.log(`[Dispatcher] Triggering ${nextAgent} for standup in #${activeStandupQueue.channel}`);
+  logger.info(
+    "Dispatcher",
+    `Triggering ${nextAgent} for standup in #${activeStandupQueue.channel}`
+  );
 
-  triggerAgentForStandup(nextAgent, activeStandupQueue.channel, activeStandupQueue.sessionId);
+  triggerAgentForStandup(
+    nextAgent,
+    activeStandupQueue.channel,
+    activeStandupQueue.sessionId
+  );
 }
 
 /**
  * Trigger a specific agent for standup using their resumed session
  */
-async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId: string): Promise<void> {
+async function triggerAgentForStandup(
+  agent: AgentId,
+  channel: string,
+  sessionId: string
+): Promise<void> {
   const sessionIdEnv = getSessionId(agent);
   const state = agentState[agent];
 
@@ -643,7 +748,7 @@ async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId
         "claude",
         "-r",
         sessionIdEnv,
-        `A standup has been requested in #${channel} for ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`,
+        `A standup has been requested in #${channel} for ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`,
         "-p",
       ],
       {
@@ -665,7 +770,9 @@ async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId
       state.lastExitCode = exitCode;
       state.lastActiveStart = null;
 
-      console.log(`[Dispatcher] ${agent} standup session ended (exit code: ${exitCode})`);
+      logger.info("Dispatcher", `${agent} standup session ended`, {
+        exitCode,
+      });
 
       if (broadcast) {
         broadcast("agent_session_ended", {
@@ -686,9 +793,11 @@ async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              break;
+            }
             const text = new TextDecoder().decode(value);
-            console.log(`[${agent}] ${text.trim()}`);
+            logger.debug(agent, text.trim());
           }
         } catch {
           // Stream closed
@@ -703,9 +812,11 @@ async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              break;
+            }
             const text = new TextDecoder().decode(value);
-            console.error(`[${agent}:err] ${text.trim()}`);
+            logger.error(agent, text.trim());
           }
         } catch {
           // Stream closed
@@ -713,7 +824,9 @@ async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId
       })();
     }
   } catch (error) {
-    console.error(`[Dispatcher] Failed to trigger ${agent} for standup:`, error);
+    logger.error("Dispatcher", `Failed to trigger ${agent} for standup`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
     state.activeProcess = null;
     state.lastActiveStart = null;
 
@@ -738,7 +851,11 @@ async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId
 /**
  * Called when a channel message is written - advances standup queue if applicable
  */
-export function onStandupChannelMessage(channel: string, from: string, content: string): void {
+export function onStandupChannelMessage(
+  channel: string,
+  from: string,
+  content: string
+): void {
   if (!activeStandupQueue) {
     return;
   }
@@ -751,7 +868,7 @@ export function onStandupChannelMessage(channel: string, from: string, content: 
     return;
   }
 
-  console.log(`[Dispatcher] ${from} completed standup in #${channel}`);
+  logger.info("Dispatcher", `${from} completed standup in #${channel}`);
 
   // Mark agent as completed
   activeStandupQueue.completedAgents.push(from as AgentId);

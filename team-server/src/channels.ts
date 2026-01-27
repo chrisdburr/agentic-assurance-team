@@ -6,11 +6,18 @@
  * Read state is tracked per agent in SQLite.
  */
 
-import { existsSync, readFileSync, appendFileSync, mkdirSync, writeFileSync } from "fs";
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
 import db from "./db.js";
+import { logger } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -42,7 +49,7 @@ db.exec(`
 
 // Prepared statements for read state
 const getReadState = db.prepare(
-  `SELECT last_read_timestamp FROM channel_read_state WHERE agent_id = $agentId AND channel = $channel`
+  "SELECT last_read_timestamp FROM channel_read_state WHERE agent_id = $agentId AND channel = $channel"
 );
 
 const upsertReadState = db.prepare(
@@ -126,7 +133,7 @@ export function appendChannelMessage(
   };
 
   const path = getChannelPath(channel);
-  appendFileSync(path, JSON.stringify(message) + "\n");
+  appendFileSync(path, `${JSON.stringify(message)}\n`);
 
   // Notify listeners of the new message
   notifyListeners(channel, message);
@@ -137,7 +144,10 @@ export function appendChannelMessage(
 /**
  * Read messages from a channel
  */
-export function readChannelMessages(channel: string, limit = 50): ChannelMessage[] {
+export function readChannelMessages(
+  channel: string,
+  limit = 50
+): ChannelMessage[] {
   if (!isValidChannel(channel)) {
     throw new Error(`Invalid channel: ${channel}`);
   }
@@ -173,9 +183,10 @@ export function getUnreadChannelMessages(
   const messages = readChannelMessages(channel, 100);
 
   // Get last read timestamp for this agent
-  const readState = getReadState.get({ $agentId: agentId, $channel: channel }) as
-    | { last_read_timestamp: string }
-    | undefined;
+  const readState = getReadState.get({
+    $agentId: agentId,
+    $channel: channel,
+  }) as { last_read_timestamp: string } | undefined;
 
   if (!readState) {
     // Never read - return all messages
@@ -215,9 +226,10 @@ export function getLastReadTimestamp(
   channel: string,
   agentId: string
 ): string | null {
-  const readState = getReadState.get({ $agentId: agentId, $channel: channel }) as
-    | { last_read_timestamp: string }
-    | undefined;
+  const readState = getReadState.get({
+    $agentId: agentId,
+    $channel: channel,
+  }) as { last_read_timestamp: string } | undefined;
 
   return readState?.last_read_timestamp || null;
 }
@@ -246,7 +258,10 @@ export function getUnreadCountsForAgent(
 }
 
 // Message listeners for real-time notifications
-type ChannelMessageListener = (channel: string, message: ChannelMessage) => void;
+type ChannelMessageListener = (
+  channel: string,
+  message: ChannelMessage
+) => void;
 const messageListeners: ChannelMessageListener[] = [];
 
 /**
@@ -270,7 +285,7 @@ function notifyListeners(channel: string, message: ChannelMessage): void {
     try {
       listener(channel, message);
     } catch (error) {
-      console.error("[Channels] Listener error:", error);
+      logger.error("Channels", "Listener error", { error: String(error) });
     }
   }
 }

@@ -1,6 +1,11 @@
 services:
   traefik:
     image: traefik:v3.6
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command:
       # API and dashboard
       - "--api.dashboard=true"
@@ -38,6 +43,11 @@ services:
   # Start it with: cd team-server && WEB_PORT=3030 DISPATCHER_ENABLED=true bun run src/index.ts
 
   team-dashboard:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     build:
       context: ./team-dashboard
       args:
@@ -73,6 +83,11 @@ services:
   # Cloudflare Tunnel - exposes app publicly without port forwarding
   # Set CLOUDFLARE_TUNNEL_TOKEN in .env or environment
   cloudflared:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: cloudflare/cloudflared:latest
     command: tunnel run
     environment:

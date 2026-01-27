@@ -1,30 +1,28 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
-  sendMessage,
-  listMessages,
-  markMessageRead,
-  getThread,
-  postStandup,
-  getTodayStandups,
-  getStandupsBySession,
-  updateStatus,
-  getTeamStatus,
-  getTeamRoster,
-} from "./db.js";
-import {
-  readChannelMessages,
-  getUnreadChannelMessages,
   appendChannelMessage,
-  markChannelRead,
-  listChannels,
-  isValidChannel,
   type ChannelMessage,
+  getUnreadChannelMessages,
+  isValidChannel,
+  listChannels,
+  markChannelRead,
+  readChannelMessages,
 } from "./channels.js";
 import {
-  startStandupQueue,
-  getStandupQueueStatus,
-} from "./dispatcher.js";
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
+  getStandupsBySession,
+  getTeamRoster,
+  getTeamStatus,
+  getThread,
+  getTodayStandups,
+  listMessages,
+  markMessageRead,
+  postStandup,
+  sendMessage,
+  updateStatus,
+} from "./db.js";
+import { getStandupQueueStatus, startStandupQueue } from "./dispatcher.js";
+import { logger } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -32,7 +30,7 @@ const PROJECT_ROOT = resolve(__dirname, "../..");
 // Safeguard constants for ask_agent
 const MAX_ASK_DEPTH = 3;
 const MAX_ASK_CALLS_PER_SESSION = 10;
-const ASK_TIMEOUT_MS = 60000; // 60 seconds
+const ASK_TIMEOUT_MS = 60_000; // 60 seconds
 
 // Track call count per session (resets when process restarts)
 let askCallCount = 0;
@@ -48,7 +46,7 @@ const getAgentId = (): string => {
 
 // Get current ask depth from environment
 const getAskDepth = (): number => {
-  return parseInt(process.env.ASK_DEPTH || "0");
+  return Number.parseInt(process.env.ASK_DEPTH || "0");
 };
 
 // Get caller chain to prevent callbacks
@@ -77,7 +75,8 @@ export const toolDefinitions = [
         },
         thread_id: {
           type: "string",
-          description: "Optional thread ID to reply to an existing conversation",
+          description:
+            "Optional thread ID to reply to an existing conversation",
         },
       },
       required: ["to", "content"],
@@ -159,7 +158,8 @@ export const toolDefinitions = [
   },
   {
     name: "status_update",
-    description: "Update the current agent's status and what they're working on.",
+    description:
+      "Update the current agent's status and what they're working on.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -190,7 +190,8 @@ export const toolDefinitions = [
   },
   {
     name: "team_roster",
-    description: "Get the list of all team members with their roles and expertise.",
+    description:
+      "Get the list of all team members with their roles and expertise.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -258,7 +259,8 @@ export const toolDefinitions = [
         },
         unread_only: {
           type: "boolean",
-          description: "Only return messages since your last read (default false)",
+          description:
+            "Only return messages since your last read (default false)",
           default: false,
         },
       },
@@ -442,7 +444,8 @@ export async function handleToolCall(
         success: true,
         session_id: sessionId,
         channel,
-        message: "Standup session started. Agents will respond sequentially in the channel.",
+        message:
+          "Standup session started. Agents will respond sequentially in the channel.",
         agents: ["alice", "bob", "charlie"],
       };
     }
@@ -519,7 +522,8 @@ export async function handleToolCall(
         return {
           success: false,
           error: `Cannot call ${agent} - they are already in the caller chain: ${callerChain.join(" → ")} → ${callerAgent}`,
-          suggestion: "Use message_send for async communication to avoid circular calls.",
+          suggestion:
+            "Use message_send for async communication to avoid circular calls.",
         };
       }
 
@@ -536,7 +540,10 @@ export async function handleToolCall(
       const newCallerChain = [...callerChain, callerAgent].join(",");
 
       // Log the invocation
-      console.error(`[ask_agent] ${callerAgent} asking ${agent} (depth: ${currentDepth + 1}/${MAX_ASK_DEPTH})`);
+      logger.info("Tools", `${callerAgent} asking ${agent}`, {
+        depth: currentDepth + 1,
+        maxDepth: MAX_ASK_DEPTH,
+      });
 
       // Broadcast to dashboard that agent conversation is starting
       const webPort = process.env.WEB_PORT || "3030";
@@ -605,7 +612,9 @@ export async function handleToolCall(
               from: callerAgent,
               to: agent,
               question,
-              response: response.trim().slice(0, 200) + (response.length > 200 ? "..." : ""),
+              response:
+                response.trim().slice(0, 200) +
+                (response.length > 200 ? "..." : ""),
               status: "completed",
               depth: currentDepth + 1,
               timestamp: new Date().toISOString(),
@@ -626,7 +635,8 @@ export async function handleToolCall(
           return {
             success: false,
             error: `Agent ${agent} did not respond within ${ASK_TIMEOUT_MS / 1000} seconds.`,
-            suggestion: "The agent may be busy. Try message_send for async communication.",
+            suggestion:
+              "The agent may be busy. Try message_send for async communication.",
           };
         }
         return {
@@ -637,14 +647,20 @@ export async function handleToolCall(
     }
 
     case "channel_read": {
-      const { channel, limit = 20, unread_only = false } = args as {
+      const {
+        channel,
+        limit = 20,
+        unread_only = false,
+      } = args as {
         channel: string;
         limit?: number;
         unread_only?: boolean;
       };
 
       if (!isValidChannel(channel)) {
-        return { error: `Invalid channel: ${channel}. Valid channels: team, research` };
+        return {
+          error: `Invalid channel: ${channel}. Valid channels: team, research`,
+        };
       }
 
       let messages: ChannelMessage[];
@@ -674,10 +690,12 @@ export async function handleToolCall(
       };
 
       if (!isValidChannel(channel)) {
-        return { error: `Invalid channel: ${channel}. Valid channels: team, research` };
+        return {
+          error: `Invalid channel: ${channel}. Valid channels: team, research`,
+        };
       }
 
-      if (!content || !content.trim()) {
+      if (!(content && content.trim())) {
         return { error: "Message content cannot be empty" };
       }
 
@@ -707,9 +725,10 @@ export async function handleToolCall(
         channels: channels.map((c) => ({
           id: c,
           name: c === "team" ? "#team" : `#${c}`,
-          description: c === "team"
-            ? "General team discussions and announcements"
-            : "Research discussions and collaboration",
+          description:
+            c === "team"
+              ? "General team discussions and announcements"
+              : "Research discussions and collaboration",
         })),
       };
     }

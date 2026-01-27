@@ -37,6 +37,7 @@ import {
   startStandupQueue,
   triggerAgentForChannel,
 } from "./dispatcher.js";
+import { logger } from "./logger.js";
 import { handleToolCall, toolDefinitions } from "./tools.js";
 
 // Parse @mentions from message content (for DMs - channels use channels.ts version)
@@ -68,8 +69,9 @@ async function triggerMentionedAgents(
   for (const agentId of message.mentions) {
     // Only trigger valid agents
     if (["alice", "bob", "charlie"].includes(agentId)) {
-      console.log(
-        `[Channel] Triggering ${agentId} for @mention in #${channel}`
+      logger.info(
+        "Channel",
+        `Triggering ${agentId} for @mention in #${channel}`
       );
       await triggerAgentForChannel(agentId, channel);
     }
@@ -165,7 +167,7 @@ async function runMcpServer() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Team MCP server running on stdio");
+  logger.info("MCP", "Team MCP server running on stdio");
 }
 
 // HTTP Server setup with Hono
@@ -253,7 +255,7 @@ function runHttpServer() {
       // This provides faster response than waiting for polling
       if (["alice", "bob", "charlie"].includes(to)) {
         manualTrigger(to).catch((err) => {
-          console.error(`[API] Failed to trigger ${to}:`, err);
+          logger.error("API", `Failed to trigger ${to}: ${err}`);
         });
       }
 
@@ -511,21 +513,27 @@ function runHttpServer() {
     websocket: {
       open(ws) {
         wsClients.add(ws);
-        console.log(`WebSocket client connected (${wsClients.size} total)`);
+        logger.debug("WebSocket", `Client connected (${wsClients.size} total)`);
       },
       close(ws) {
         wsClients.delete(ws);
-        console.log(`WebSocket client disconnected (${wsClients.size} total)`);
+        logger.debug(
+          "WebSocket",
+          `Client disconnected (${wsClients.size} total)`
+        );
       },
-      message(ws, message) {
+      message(_ws, message) {
         // Handle incoming WebSocket messages if needed
-        console.log("WebSocket message received:", message);
+        logger.debug("WebSocket", `Message received: ${message}`);
       },
     },
   });
 
-  console.log(`Team HTTP server running on http://localhost:${WEB_PORT}`);
-  console.log(`WebSocket available at ws://localhost:${WEB_PORT}/ws`);
+  logger.info(
+    "HTTP",
+    `Team HTTP server running on http://localhost:${WEB_PORT}`
+  );
+  logger.info("HTTP", `WebSocket available at ws://localhost:${WEB_PORT}/ws`);
 
   // Initialize agent dispatcher
   initDispatcher(broadcast);
