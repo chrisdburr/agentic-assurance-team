@@ -643,7 +643,7 @@ async function triggerAgentForStandup(agent: AgentId, channel: string, sessionId
         "claude",
         "-r",
         sessionIdEnv,
-        `A standup has been requested in #${channel}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`,
+        `A standup has been requested in #${channel} for ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`,
         "-p",
       ],
       {

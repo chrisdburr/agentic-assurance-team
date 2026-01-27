@@ -17,6 +17,7 @@ You have been asked to provide your daily standup update in a channel.
 ## Format
 
 Your update should follow this structure:
+- Start with the date as a header (e.g., "**Standup - Monday, January 27, 2025**")
 - **Yesterday**: What you accomplished (1-2 sentences)
 - **Today**: What you plan to work on (1-2 sentences)
 - **Blockers**: Any impediments or questions (or "None")
@@ -26,6 +27,8 @@ Keep it brief and focused on your domain expertise.
 ## Example
 
 ```
+**Standup - Monday, January 27, 2025**
+
 **Yesterday**: Refined the epistemic trust framework, focusing on how agents can justify beliefs based on testimony from other agents.
 **Today**: Will analyze the uncertainty quantification approach Bob proposed and assess its philosophical foundations.
 **Blockers**: None
