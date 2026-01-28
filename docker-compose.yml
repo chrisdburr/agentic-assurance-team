@@ -10,6 +10,11 @@ services:
       # API and dashboard
       - "--api.dashboard=true"
       - "--api.insecure=true"
+      # Access logging (JSON format for parsing)
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+      - "--accesslog.fields.headers.names.CF-Connecting-IP=keep"
+      - "--accesslog.fields.headers.names.X-Forwarded-For=keep"
       # Docker provider
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"

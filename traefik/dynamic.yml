@@ -1,3 +1,22 @@
+# Rate Limiting Configuration for Auth Endpoints
+#
+# This file implements Layer 2 (Traefik) rate limiting.
+# For complete protection, also configure:
+#
+# CLOUDFLARE DASHBOARD (Layer 1 - Edge):
+# 1. Go to Security > WAF > Rate limiting rules
+# 2. Create rule:
+#    - Name: "Auth endpoint rate limit"
+#    - If: URI Path contains "/auth/callback" AND Request Method equals "POST"
+#    - Then: Block for 60 seconds
+#    - With characteristics: IP
+#    - Rate: 5 requests per 10 seconds
+# 3. Optional: Enable Bot Fight Mode in Security > Bots
+#
+# APPLICATION (Layer 3):
+# Account lockout is implemented in team-dashboard/src/lib/auth.ts
+# - 5 failed attempts = 15 minute lockout per username:IP
+
 http:
   routers:
     websocket:
@@ -7,8 +26,34 @@ http:
       service: team-server-host
       priority: 100
 
+    # Auth callback route with rate limiting
+    auth-callback:
+      rule: "PathPrefix(`/auth/callback`)"
+      entryPoints:
+        - web
+      service: team-dashboard
+      middlewares:
+        - auth-rate-limit
+      priority: 90
+
+  middlewares:
+    # Rate limiting for auth endpoints: 10 requests per minute per IP
+    # Uses CF-Connecting-IP for accurate client IP behind Cloudflare
+    auth-rate-limit:
+      rateLimit:
+        average: 10
+        period: 1m
+        burst: 5
+        sourceCriterion:
+          requestHeaderName: CF-Connecting-IP
+
   services:
     team-server-host:
       loadBalancer:
         servers:
           - url: "http://host.docker.internal:3030"
+
+    team-dashboard:
+      loadBalancer:
+        servers:
+          - url: "http://team-dashboard:3000"
