@@ -1,8 +1,7 @@
 import { Database } from "bun:sqlite";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
-
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -40,10 +39,20 @@ db.exec(`
     updated_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_agent);
   CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
   CREATE INDEX IF NOT EXISTS idx_standups_date ON standups(date);
   CREATE INDEX IF NOT EXISTS idx_standups_session ON standups(session_id);
+  CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 `);
 
 // Prepared statements
@@ -67,27 +76,27 @@ const countUnreadMessagesForAgent = db.prepare(
 );
 
 const selectMessagesByToAgent = db.prepare(
-  `SELECT * FROM messages WHERE to_agent = $toAgent ORDER BY timestamp DESC LIMIT $limit`
+  "SELECT * FROM messages WHERE to_agent = $toAgent ORDER BY timestamp DESC LIMIT $limit"
 );
 
 const selectMessagesByFromAgent = db.prepare(
-  `SELECT * FROM messages WHERE from_agent = $fromAgent ORDER BY timestamp DESC LIMIT $limit`
+  "SELECT * FROM messages WHERE from_agent = $fromAgent ORDER BY timestamp DESC LIMIT $limit"
 );
 
 const selectMessagesByThread = db.prepare(
-  `SELECT * FROM messages WHERE thread_id = $threadId ORDER BY timestamp ASC`
+  "SELECT * FROM messages WHERE thread_id = $threadId ORDER BY timestamp ASC"
 );
 
 const selectMessageReadBy = db.prepare(
-  `SELECT read_by FROM messages WHERE id = $id`
+  "SELECT read_by FROM messages WHERE id = $id"
 );
 
 const updateMessageReadBy = db.prepare(
-  `UPDATE messages SET read_by = $readBy WHERE id = $id`
+  "UPDATE messages SET read_by = $readBy WHERE id = $id"
 );
 
 const selectAllMessages = db.prepare(
-  `SELECT * FROM messages ORDER BY timestamp DESC LIMIT $limit`
+  "SELECT * FROM messages ORDER BY timestamp DESC LIMIT $limit"
 );
 
 const insertStandup = db.prepare(
@@ -96,11 +105,11 @@ const insertStandup = db.prepare(
 );
 
 const selectStandupsByDate = db.prepare(
-  `SELECT * FROM standups WHERE date = $date ORDER BY timestamp ASC`
+  "SELECT * FROM standups WHERE date = $date ORDER BY timestamp ASC"
 );
 
 const selectStandupsBySession = db.prepare(
-  `SELECT * FROM standups WHERE session_id = $sessionId ORDER BY timestamp ASC`
+  "SELECT * FROM standups WHERE session_id = $sessionId ORDER BY timestamp ASC"
 );
 
 const upsertStatus = db.prepare(
@@ -114,12 +123,30 @@ const upsertStatus = db.prepare(
 );
 
 const selectAllStatus = db.prepare(
-  `SELECT * FROM status ORDER BY updated_at DESC`
+  "SELECT * FROM status ORDER BY updated_at DESC"
 );
 
 const selectAgentStatus = db.prepare(
-  `SELECT * FROM status WHERE agent_id = $agentId`
+  "SELECT * FROM status WHERE agent_id = $agentId"
 );
+
+// User prepared statements
+const insertUser = db.prepare(
+  `INSERT INTO users (id, username, email, password_hash, created_at, updated_at)
+   VALUES ($id, $username, $email, $passwordHash, $createdAt, $updatedAt)`
+);
+
+const selectUserByUsername = db.prepare(
+  "SELECT * FROM users WHERE username = $username"
+);
+
+const selectUserById = db.prepare("SELECT * FROM users WHERE id = $id");
+
+const updateUserPassword = db.prepare(
+  "UPDATE users SET password_hash = $passwordHash, updated_at = $updatedAt WHERE id = $id"
+);
+
+const countUsers = db.prepare("SELECT COUNT(*) as count FROM users");
 
 // Message functions
 export function sendMessage(
@@ -149,7 +176,9 @@ export function listMessages(
   options: { unreadOnly?: boolean; threadId?: string } = {}
 ): Message[] {
   if (options.threadId) {
-    return selectMessagesByThread.all({ $threadId: options.threadId }) as Message[];
+    return selectMessagesByThread.all({
+      $threadId: options.threadId,
+    }) as Message[];
   }
 
   if (options.unreadOnly) {
@@ -160,13 +189,18 @@ export function listMessages(
 }
 
 export function markMessageRead(messageId: string, agentId: string): void {
-  const msg = selectMessageReadBy.get({ $id: messageId }) as { read_by: string } | null;
+  const msg = selectMessageReadBy.get({ $id: messageId }) as {
+    read_by: string;
+  } | null;
 
   if (msg) {
     const readBy: string[] = JSON.parse(msg.read_by);
     if (!readBy.includes(agentId)) {
       readBy.push(agentId);
-      updateMessageReadBy.run({ $readBy: JSON.stringify(readBy), $id: messageId });
+      updateMessageReadBy.run({
+        $readBy: JSON.stringify(readBy),
+        $id: messageId,
+      });
     }
   }
 }
@@ -180,16 +214,32 @@ export function getAllMessages(limit = 100): Message[] {
 }
 
 export function getMessagesByToAgent(toAgent: string, limit = 100): Message[] {
-  return selectMessagesByToAgent.all({ $toAgent: toAgent, $limit: limit }) as Message[];
+  return selectMessagesByToAgent.all({
+    $toAgent: toAgent,
+    $limit: limit,
+  }) as Message[];
 }
 
-export function getMessagesByFromAgent(fromAgent: string, limit = 100): Message[] {
-  return selectMessagesByFromAgent.all({ $fromAgent: fromAgent, $limit: limit }) as Message[];
+export function getMessagesByFromAgent(
+  fromAgent: string,
+  limit = 100
+): Message[] {
+  return selectMessagesByFromAgent.all({
+    $fromAgent: fromAgent,
+    $limit: limit,
+  }) as Message[];
 }
 
-export function getUnreadMessages(agentId: string): { count: number; messages: Message[] } {
-  const countResult = countUnreadMessagesForAgent.get({ $agentId: agentId }) as { count: number };
-  const messages = selectUnreadMessagesForAgent.all({ $agentId: agentId }) as Message[];
+export function getUnreadMessages(agentId: string): {
+  count: number;
+  messages: Message[];
+} {
+  const countResult = countUnreadMessagesForAgent.get({
+    $agentId: agentId,
+  }) as { count: number };
+  const messages = selectUnreadMessagesForAgent.all({
+    $agentId: agentId,
+  }) as Message[];
   return { count: countResult.count, messages };
 }
 
@@ -278,6 +328,96 @@ export function getTeamRoster(): TeamMember[] {
   ];
 }
 
+// User functions
+export async function createUser(
+  username: string,
+  email: string,
+  password: string
+): Promise<User> {
+  const id = nanoid();
+  const now = new Date().toISOString();
+  const passwordHash = await Bun.password.hash(password);
+
+  insertUser.run({
+    $id: id,
+    $username: username,
+    $email: email,
+    $passwordHash: passwordHash,
+    $createdAt: now,
+    $updatedAt: now,
+  });
+
+  return {
+    id,
+    username,
+    email,
+    password_hash: passwordHash,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+export function getUserByUsername(username: string): User | undefined {
+  return selectUserByUsername.get({ $username: username }) as User | undefined;
+}
+
+export function getUserById(id: string): User | undefined {
+  return selectUserById.get({ $id: id }) as User | undefined;
+}
+
+export async function updatePassword(
+  userId: string,
+  newPassword: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const passwordHash = await Bun.password.hash(newPassword);
+
+  updateUserPassword.run({
+    $id: userId,
+    $passwordHash: passwordHash,
+    $updatedAt: now,
+  });
+}
+
+export async function validatePassword(
+  username: string,
+  password: string
+): Promise<User | null> {
+  const user = getUserByUsername(username);
+  if (!user) {
+    return null;
+  }
+
+  const isValid = await Bun.password.verify(password, user.password_hash);
+  return isValid ? user : null;
+}
+
+// Seed default user from env vars on startup (backward compatibility)
+async function seedDefaultUser(): Promise<void> {
+  const result = countUsers.get() as { count: number };
+  if (result.count > 0) {
+    return; // Users already exist
+  }
+
+  const username = process.env.AUTH_USERNAME;
+  const password = process.env.AUTH_PASSWORD;
+
+  if (!(username && password)) {
+    console.log(
+      "[DB] No AUTH_USERNAME/AUTH_PASSWORD set and no users exist. Skipping seed."
+    );
+    return;
+  }
+
+  console.log(`[DB] Seeding default user: ${username}`);
+  await createUser(username, `${username}@team.local`, password);
+}
+
+// Run seed on module load
+seedDefaultUser().catch((err) => {
+  console.error("[DB] Failed to seed default user:", err);
+});
+
 // Types
 export interface Message {
   id: string;
@@ -311,6 +451,15 @@ export interface TeamMember {
   name: string;
   role: string;
   expertise: string;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  password_hash: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export default db;

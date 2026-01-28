@@ -1,10 +1,19 @@
-import type { Message, ChannelMessage, AgentStatus, RosterEntry, MessageFilter, MonitoringData } from "@/types";
+import type {
+  AgentStatus,
+  ChannelMessage,
+  Message,
+  MessageFilter,
+  MonitoringData,
+  RosterEntry,
+} from "@/types";
 
 // Next.js rewrites /backend/* to team-server
 const API_BASE = "/backend";
 
 // Fetch messages with optional filters (for DMs)
-export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> {
+export async function fetchMessages(
+  filter?: MessageFilter
+): Promise<Message[]> {
   const params = new URLSearchParams();
   if (filter?.to_agent) params.set("to_agent", filter.to_agent);
   if (filter?.from_agent) params.set("from_agent", filter.from_agent);
@@ -20,7 +29,9 @@ export async function fetchMessages(filter?: MessageFilter): Promise<Message[]> 
 }
 
 // Fetch messages for a channel (uses new JSONL-based channel API)
-export async function fetchChannelMessages(channel: string): Promise<ChannelMessage[]> {
+export async function fetchChannelMessages(
+  channel: string
+): Promise<ChannelMessage[]> {
   const res = await fetch(`${API_BASE}/channels/${channel}/messages`);
   if (!res.ok) throw new Error(`Failed to fetch channel messages: ${channel}`);
   const data = await res.json();
@@ -38,7 +49,9 @@ export async function sendChannelMessage(
     body: JSON.stringify({ content }),
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: "Failed to send message" }));
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to send message" }));
     throw new Error(error.error || "Failed to send channel message");
   }
   return res.json();
@@ -94,7 +107,9 @@ export async function sendMessage(
     body: JSON.stringify({ to, content, thread_id: threadId }),
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: "Failed to send message" }));
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to send message" }));
     throw new Error(error.error || "Failed to send message");
   }
   return res.json();
@@ -108,7 +123,9 @@ export async function fetchMonitoringData(): Promise<MonitoringData> {
 }
 
 // Manually trigger an agent
-export async function triggerAgent(agent: string): Promise<{ success: boolean; error?: string }> {
+export async function triggerAgent(
+  agent: string
+): Promise<{ success: boolean; error?: string }> {
   const res = await fetch(`${API_BASE}/dispatcher/trigger/${agent}`, {
     method: "POST",
   });
@@ -154,6 +171,25 @@ export async function startStandup(): Promise<{
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || "Failed to start standup");
+  }
+  return data;
+}
+
+// Change user password
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/auth/change-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, currentPassword, newPassword }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to change password");
   }
   return data;
 }

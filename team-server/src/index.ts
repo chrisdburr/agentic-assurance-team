@@ -26,7 +26,10 @@ import {
   getThread,
   getTodayStandups,
   getUnreadMessages,
+  getUserById,
   sendMessage,
+  updatePassword,
+  validatePassword,
 } from "./db.js";
 import {
   getDispatcherStatus,
@@ -307,6 +310,81 @@ function runHttpServer() {
   // Health check
   app.get("/api/health", (c) => {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Auth endpoints
+  app.post("/api/auth/validate", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { username, password } = body;
+
+      if (!(username && password)) {
+        return c.json({ valid: false, error: "Missing credentials" }, 400);
+      }
+
+      const user = await validatePassword(username, password);
+      if (!user) {
+        return c.json({ valid: false });
+      }
+
+      return c.json({
+        valid: true,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ valid: false, error: message }, 500);
+    }
+  });
+
+  app.post("/api/auth/change-password", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { userId, currentPassword, newPassword } = body;
+
+      if (!(userId && currentPassword && newPassword)) {
+        return c.json(
+          { success: false, error: "Missing required fields" },
+          400
+        );
+      }
+
+      if (newPassword.length < 8) {
+        return c.json(
+          {
+            success: false,
+            error: "New password must be at least 8 characters",
+          },
+          400
+        );
+      }
+
+      // Get user and verify current password
+      const user = getUserById(userId);
+      if (!user) {
+        return c.json({ success: false, error: "User not found" }, 404);
+      }
+
+      const isValid = await validatePassword(user.username, currentPassword);
+      if (!isValid) {
+        return c.json(
+          { success: false, error: "Current password is incorrect" },
+          401
+        );
+      }
+
+      // Update password
+      await updatePassword(userId, newPassword);
+
+      return c.json({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ success: false, error: message }, 500);
+    }
   });
 
   // Broadcast endpoint for MCP processes to notify WebSocket clients

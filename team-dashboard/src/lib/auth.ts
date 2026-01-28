@@ -1,6 +1,9 @@
 import type { NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 
+// Team server URL for auth validation
+const TEAM_SERVER_URL = process.env.TEAM_SERVER_URL || "http://localhost:3030";
+
 // Account lockout configuration
 const LOCKOUT_THRESHOLD = 5; // Failed attempts before lockout
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
@@ -121,13 +124,12 @@ export const authConfig: NextAuthConfig = {
         username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" },
       },
-      authorize(credentials, request) {
+      async authorize(credentials, request) {
         // Periodically clean up stale lockout entries to prevent memory leaks
         cleanupStaleEntries();
 
-        const username = process.env.AUTH_USERNAME || "admin";
-        const password = process.env.AUTH_PASSWORD || "admin";
         const providedUsername = credentials?.username as string;
+        const providedPassword = credentials?.password as string;
         const ip = getClientIP(request);
         const lockoutKey = getLockoutKey(providedUsername || "unknown", ip);
 
@@ -143,28 +145,43 @@ export const authConfig: NextAuthConfig = {
           return null;
         }
 
-        if (
-          credentials?.username === username &&
-          credentials?.password === password
-        ) {
+        try {
+          // Validate credentials against team-server
+          const res = await fetch(`${TEAM_SERVER_URL}/api/auth/validate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: providedUsername,
+              password: providedPassword,
+            }),
+          });
+
+          const data = await res.json();
+
+          if (!data.valid) {
+            // Failed login - record the attempt
+            console.log(
+              `[AUTH] Failed login attempt: ${providedUsername} from ${ip}`
+            );
+            recordFailedAttempt(lockoutKey);
+            return null;
+          }
+
           // Successful login - clear any failed attempts
           clearFailedAttempts(lockoutKey);
           console.log(
             `[AUTH] Successful login: ${providedUsername} from ${ip}`
           );
           return {
-            id: "1",
-            name: credentials.username as string,
-            email: `${credentials.username}@team.local`,
+            id: data.user.id,
+            name: data.user.username,
+            email: data.user.email,
+            username: data.user.username,
           };
+        } catch (error) {
+          console.error("[AUTH] Error validating credentials:", error);
+          return null;
         }
-
-        // Failed login - record the attempt
-        console.log(
-          `[AUTH] Failed login attempt: ${providedUsername} from ${ip}`
-        );
-        recordFailedAttempt(lockoutKey);
-        return null;
       },
     }),
   ],
@@ -185,6 +202,20 @@ export const authConfig: NextAuthConfig = {
       }
 
       return true;
+    },
+    jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+        token.username = user.username ?? user.name ?? "";
+      }
+      return token;
+    },
+    session({ session, token }) {
+      if (token && session.user) {
+        session.user.id = token.id as string;
+        session.user.username = token.username as string;
+      }
+      return session;
     },
   },
 };
