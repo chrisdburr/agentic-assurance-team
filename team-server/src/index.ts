@@ -35,8 +35,10 @@ import {
   getTodayStandups,
   getUnreadMessages,
   getUserById,
+  isChannelMember,
   removeChannelMember,
   sendMessage,
+  transferChannelOwnership,
   updatePassword,
   validatePassword,
 } from "./db.js";
@@ -587,6 +589,78 @@ function runHttpServer() {
       broadcast("channel_created", { channel });
 
       return c.json({ success: true, channel }, 201);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: msg }, 500);
+    }
+  });
+
+  // Transfer channel ownership (owner only)
+  app.post("/api/channels/:channel/transfer-ownership", async (c) => {
+    const channelId = c.req.param("channel");
+    const userId = getUserIdFromRequest(c);
+
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const channel = getChannelById(channelId);
+    if (!channel) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
+
+    // System channels cannot be transferred
+    if (channel.owner_id === "system") {
+      return c.json({ error: "System channels cannot be transferred" }, 403);
+    }
+
+    // Only owner can transfer ownership
+    if (channel.owner_id !== userId) {
+      return c.json(
+        { error: "Only the channel owner can transfer ownership" },
+        403
+      );
+    }
+
+    try {
+      const body = await c.req.json();
+      const { new_owner_id } = body;
+
+      if (!new_owner_id || typeof new_owner_id !== "string") {
+        return c.json({ error: "new_owner_id is required" }, 400);
+      }
+
+      // Verify new owner exists as a user
+      const newOwnerUser = getUserById(new_owner_id);
+      if (!newOwnerUser) {
+        return c.json({ error: "New owner user not found" }, 400);
+      }
+
+      // Verify new owner is a member of the channel
+      if (!isChannelMember(channelId, "user", new_owner_id)) {
+        return c.json(
+          { error: "New owner must be a member of the channel" },
+          400
+        );
+      }
+
+      // Cannot transfer to self
+      if (new_owner_id === userId) {
+        return c.json({ error: "Cannot transfer ownership to yourself" }, 400);
+      }
+
+      const success = transferChannelOwnership(channelId, userId, new_owner_id);
+      if (!success) {
+        return c.json({ error: "Failed to transfer ownership" }, 500);
+      }
+
+      broadcast("channel_ownership_transferred", {
+        channel_id: channelId,
+        old_owner_id: userId,
+        new_owner_id,
+      });
+
+      return c.json({ success: true, new_owner_id });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return c.json({ error: msg }, 500);
