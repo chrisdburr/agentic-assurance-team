@@ -265,8 +265,10 @@ function runHttpServer() {
 
       // Immediately trigger the recipient agent if it's an AI agent
       // This provides faster response than waiting for polling
+      // Pass userId for DM session scoping (each user gets isolated context)
       if (["alice", "bob", "charlie"].includes(to)) {
-        manualTrigger(to).catch((err) => {
+        const userId = c.req.header("x-user-id") || undefined;
+        manualTrigger(to, userId).catch((err) => {
           logger.error("API", `Failed to trigger ${to}: ${err}`);
         });
       }
