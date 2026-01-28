@@ -179,11 +179,17 @@ export function getAgentHealth(agent: AgentId): HealthStatus {
 /**
  * Trigger an agent session via Claude CLI
  */
-async function triggerAgent(agent: AgentId): Promise<void> {
-  const sessionId = getSessionId(agent);
+async function triggerAgent(
+  agent: AgentId,
+  context?: SessionContext
+): Promise<void> {
+  const sessionId = getSessionId(agent, context);
   const state = agentState[agent];
 
-  logger.info("Dispatcher", `Triggering ${agent}`, { sessionId });
+  logger.info("Dispatcher", `Triggering ${agent}`, {
+    sessionId,
+    contextType: context?.type,
+  });
 
   state.lastTriggerTime = Date.now();
   state.lastActiveStart = Date.now();
@@ -475,9 +481,14 @@ export function getDispatcherStatus(): {
 
 /**
  * Manually trigger an agent (bypasses cooldown check)
+ * @param agent - The agent to trigger
+ * @param userId - Optional user ID for DM session scoping. When provided,
+ *                 creates/resumes a DM session isolated to this user.
+ *                 When omitted, uses default session (backward compatible).
  */
 export async function manualTrigger(
-  agent: string
+  agent: string,
+  userId?: string
 ): Promise<{ success: boolean; error?: string }> {
   if (!AGENTS.includes(agent as AgentId)) {
     return { success: false, error: `Unknown agent: ${agent}` };
@@ -490,7 +501,12 @@ export async function manualTrigger(
     return { success: false, error: `${agent} already has an active session` };
   }
 
-  await triggerAgent(agentId);
+  // Build session context for DMs when userId is provided
+  const context: SessionContext | undefined = userId
+    ? { type: "dm", userId }
+    : undefined;
+
+  await triggerAgent(agentId, context);
   return { success: true };
 }
 
