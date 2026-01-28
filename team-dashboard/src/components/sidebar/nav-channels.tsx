@@ -1,14 +1,16 @@
 "use client";
 
-import { Hash, Loader2, Plus } from "lucide-react";
+import { Hash, Loader2, Plus, Settings } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
+import { ChannelManageDialog } from "@/components/channels/channel-manage-dialog";
 import {
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
@@ -33,7 +35,7 @@ const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export function NavChannels() {
   const pathname = usePathname();
-  const { data, error, isLoading } = useSWR<ChannelsResponse>(
+  const { data, error, isLoading, mutate } = useSWR<ChannelsResponse>(
     "/api/backend/channels",
     fetcher,
     {
@@ -80,6 +82,7 @@ export function NavChannels() {
           channels.map((channel) => {
             const href = `/${channel.id}`;
             const isActive = pathname === href;
+            const isSystemChannel = channel.owner_id === "system";
 
             return (
               <SidebarMenuItem key={channel.id}>
@@ -89,6 +92,19 @@ export function NavChannels() {
                     <span>{channel.name}</span>
                   </Link>
                 </SidebarMenuButton>
+                {!isSystemChannel && (
+                  <ChannelManageDialog
+                    channel={channel}
+                    onChannelDeleted={() => mutate()}
+                    onMembersChanged={() => mutate()}
+                    trigger={
+                      <SidebarMenuAction>
+                        <Settings className="h-4 w-4" />
+                        <span className="sr-only">Manage channel</span>
+                      </SidebarMenuAction>
+                    }
+                  />
+                )}
               </SidebarMenuItem>
             );
           })}

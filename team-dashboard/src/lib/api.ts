@@ -193,3 +193,116 @@ export async function changePassword(
   }
   return data;
 }
+
+// Channel member types
+export interface ChannelMember {
+  id: number;
+  channel_id: string;
+  member_type: "user" | "agent";
+  member_id: string;
+  role: "owner" | "admin" | "member";
+  joined_at: string;
+}
+
+// Fetch channel members
+export async function fetchChannelMembers(
+  channelId: string
+): Promise<ChannelMember[]> {
+  const res = await fetch(`${API_BASE}/channels/${channelId}/members`);
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to fetch members" }));
+    throw new Error(error.error || "Failed to fetch channel members");
+  }
+  const data = await res.json();
+  return data.members || [];
+}
+
+// Add a member to a channel
+export async function addChannelMember(
+  channelId: string,
+  memberType: "user" | "agent",
+  memberId: string,
+  role: "member" | "admin" = "member"
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/channels/${channelId}/members`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "add",
+      member_type: memberType,
+      member_id: memberId,
+      role,
+    }),
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to add member" }));
+    throw new Error(error.error || "Failed to add channel member");
+  }
+  return res.json();
+}
+
+// Remove a member from a channel
+export async function removeChannelMember(
+  channelId: string,
+  memberType: "user" | "agent",
+  memberId: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/channels/${channelId}/members`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "remove",
+      member_type: memberType,
+      member_id: memberId,
+    }),
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to remove member" }));
+    throw new Error(error.error || "Failed to remove channel member");
+  }
+  return res.json();
+}
+
+// Transfer channel ownership
+export async function transferChannelOwnership(
+  channelId: string,
+  newOwnerId: string
+): Promise<{ success: boolean; new_owner_id: string }> {
+  const res = await fetch(
+    `${API_BASE}/channels/${channelId}/transfer-ownership`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_owner_id: newOwnerId }),
+    }
+  );
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to transfer ownership" }));
+    throw new Error(error.error || "Failed to transfer channel ownership");
+  }
+  return res.json();
+}
+
+// Delete a channel
+export async function deleteChannel(
+  channelId: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/channels/${channelId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to delete channel" }));
+    throw new Error(error.error || "Failed to delete channel");
+  }
+  return res.json();
+}

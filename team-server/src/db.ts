@@ -658,6 +658,36 @@ export function getChannelMemberRole(
   return member?.role || null;
 }
 
+export function transferChannelOwnership(
+  channelId: string,
+  currentOwnerId: string,
+  newOwnerId: string
+): boolean {
+  const updateChannelOwner = db.prepare(
+    "UPDATE channels SET owner_id = ? WHERE id = ?"
+  );
+  const updateMemberRole = db.prepare(
+    "UPDATE channel_members SET role = ? WHERE channel_id = ? AND member_type = 'user' AND member_id = ?"
+  );
+
+  const transaction = db.transaction(() => {
+    // Update the channel's owner_id
+    updateChannelOwner.run(newOwnerId, channelId);
+    // Demote old owner to admin
+    updateMemberRole.run("admin", channelId, currentOwnerId);
+    // Promote new owner to owner
+    updateMemberRole.run("owner", channelId, newOwnerId);
+  });
+
+  try {
+    transaction();
+    return true;
+  } catch (err) {
+    console.error("[DB] Error transferring channel ownership:", err);
+    return false;
+  }
+}
+
 // Seed default channels on startup
 function seedDefaultChannels(): void {
   const result = countChannels.get() as { count: number };
