@@ -93,3 +93,23 @@ export interface MonitoringData {
   cooldown: number;
   agents: Record<string, AgentMonitoringData>;
 }
+
+// Agent from the agents library
+export interface Agent {
+  id: string;
+  name: string;
+  description: string;
+  model: string;
+  system_prompt: string;
+  is_team_agent: boolean;
+  allowed_tools?: string[];
+}
+
+// Input for creating a new agent
+export interface CreateAgentInput {
+  name: string;
+  description: string;
+  model: string;
+  system_prompt: string;
+  allowed_tools?: string[];
+}

@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  Bot,
   LogOut,
   MessageSquare,
   Settings,
@@ -73,6 +74,14 @@ export function AppSidebar() {
               <Link className="flex items-center gap-2" href="/monitoring">
                 <Activity className="h-4 w-4" />
                 <span>Monitoring</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <Link className="flex items-center gap-2" href="/agents">
+                <Bot className="h-4 w-4" />
+                <span>Agents</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

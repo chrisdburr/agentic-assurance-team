@@ -8,6 +8,12 @@ import { serve } from "bun";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import {
+  type CreateAgentInput,
+  createAgent,
+  getAgentById,
+  listAgents,
+} from "./agents.js";
+import {
   appendChannelMessage,
   type ChannelMessage,
   canAccessChannel,
@@ -870,6 +876,63 @@ function runHttpServer() {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return c.json({ error: msg }, 500);
+    }
+  });
+
+  // Agent API Routes
+
+  // List all agents
+  app.get("/api/agents", (c) => {
+    const agents = listAgents();
+    return c.json({ agents });
+  });
+
+  // Get a single agent by ID
+  app.get("/api/agents/:id", (c) => {
+    const id = c.req.param("id");
+    const agent = getAgentById(id);
+
+    if (!agent) {
+      return c.json({ error: `Agent not found: ${id}` }, 404);
+    }
+
+    return c.json({ agent });
+  });
+
+  // Create a new agent
+  app.post("/api/agents", async (c) => {
+    try {
+      const body = (await c.req.json()) as CreateAgentInput;
+      const { name, description, model, system_prompt } = body;
+
+      // Validation
+      if (!name || typeof name !== "string" || !name.trim()) {
+        return c.json({ error: "Name is required" }, 400);
+      }
+      if (!description || typeof description !== "string") {
+        return c.json({ error: "Description is required" }, 400);
+      }
+      if (!model || typeof model !== "string") {
+        return c.json({ error: "Model is required" }, 400);
+      }
+      if (!system_prompt || typeof system_prompt !== "string") {
+        return c.json({ error: "System prompt is required" }, 400);
+      }
+
+      const agent = createAgent({
+        name: name.trim().toLowerCase(),
+        description: description.trim(),
+        model: model.trim(),
+        system_prompt: system_prompt.trim(),
+        allowed_tools: body.allowed_tools,
+      });
+
+      broadcast("agent_created", { agent });
+
+      return c.json({ success: true, agent }, 201);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: msg }, 400);
     }
   });
 
