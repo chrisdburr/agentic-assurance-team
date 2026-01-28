@@ -12,16 +12,15 @@ const nextConfig: NextConfig = {
   // Use webpack for build (required for next-pwa)
   turbopack: {},
   output: "standalone",
-  async rewrites() {
+  rewrites() {
     return [
-      {
-        source: "/backend/:path*",
-        destination: `${process.env.TEAM_SERVER_URL || "http://localhost:3030"}/api/:path*`,
-      },
+      // WebSocket proxy - doesn't need user identity injection
       {
         source: "/ws",
         destination: `${process.env.TEAM_SERVER_URL || "http://localhost:3030"}/ws`,
       },
+      // Note: /backend/* is now handled by src/app/api/backend/[...path]/route.ts
+      // which injects X-User-Id and X-Username headers for user identity
     ];
   },
 };

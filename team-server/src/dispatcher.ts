@@ -10,8 +10,15 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
-import { getUnreadMessages, postStandup } from "./db.js";
+import { getOrCreateSession, getUnreadMessages, postStandup } from "./db.js";
 import { logger } from "./logger.js";
+
+// Session context for scoped sessions
+export interface SessionContext {
+  type: "channel" | "dm";
+  channelId?: string;
+  userId?: string;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -88,9 +95,27 @@ let broadcast: ((event: string, data: unknown) => void) | null = null;
 let activeStandupQueue: StandupQueue | null = null;
 
 /**
- * Get session ID for an agent from environment
+ * Get session ID for an agent, optionally scoped to a channel or user.
+ *
+ * Session scoping:
+ * - Channel sessions: shared per (channel, agent) - all users in a channel share context
+ * - DM sessions: per (user, agent) - each user has isolated context with each agent
+ *
+ * Falls back to environment variable or default if no context provided (backward compat).
  */
-function getSessionId(agent: AgentId): string {
+function getSessionId(agent: AgentId, context?: SessionContext): string {
+  // If context provided, use session registry for scoped sessions
+  if (context) {
+    return getOrCreateSession(
+      context.type,
+      PROJECT_ROOT,
+      agent,
+      context.userId,
+      context.channelId
+    );
+  }
+
+  // Backward compatibility: use env var or default
   const envVar = `${agent.toUpperCase()}_SESSION_ID`;
   return process.env[envVar] || `${agent}-session`;
 }
@@ -502,7 +527,11 @@ export async function triggerAgentForChannel(
     return { success: false, error: `${agent} in cooldown` };
   }
 
-  const sessionId = getSessionId(agentId);
+  // Get channel-scoped session ID
+  const sessionId = getSessionId(agentId, {
+    type: "channel",
+    channelId: channel,
+  });
 
   logger.info("Dispatcher", `Triggering ${agent} for #${channel} @mention`, {
     sessionId,
@@ -528,7 +557,7 @@ export async function triggerAgentForChannel(
     const proc = Bun.spawn(
       [
         "claude",
-        "-r",
+        "--session-id",
         sessionId,
         `You were @mentioned in the #${channel} channel. Do this:
 1. Call channel_read with channel="${channel}" and unread_only=true to see recent messages
@@ -721,9 +750,13 @@ function triggerNextStandupAgent(): void {
 async function triggerAgentForStandup(
   agent: AgentId,
   channel: string,
-  sessionId: string
+  standupSessionId: string
 ): Promise<void> {
-  const sessionIdEnv = getSessionId(agent);
+  // Get channel-scoped session ID for standup
+  const sessionId = getSessionId(agent, {
+    type: "channel",
+    channelId: channel,
+  });
   const state = agentState[agent];
 
   state.lastTriggerTime = Date.now();
@@ -733,10 +766,10 @@ async function triggerAgentForStandup(
   if (broadcast) {
     broadcast("agent_triggered", {
       agent,
-      sessionId: sessionIdEnv,
+      sessionId,
       channel,
       reason: "standup",
-      standupSessionId: sessionId,
+      standupSessionId,
       timestamp: new Date().toISOString(),
       triggerCount: state.triggerCount,
     });
@@ -746,8 +779,8 @@ async function triggerAgentForStandup(
     const proc = Bun.spawn(
       [
         "claude",
-        "-r",
-        sessionIdEnv,
+        "--session-id",
+        sessionId,
         `A standup has been requested in #${channel} for ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`,
         "-p",
       ],
@@ -777,7 +810,7 @@ async function triggerAgentForStandup(
       if (broadcast) {
         broadcast("agent_session_ended", {
           agent,
-          sessionId: sessionIdEnv,
+          sessionId,
           channel,
           reason: "standup",
           exitCode,

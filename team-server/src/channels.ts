@@ -4,6 +4,7 @@
  * Manages JSONL-based channel message storage.
  * Each channel is stored as an append-only JSONL file.
  * Read state is tracked per agent in SQLite.
+ * Channel definitions are now stored in SQLite (see db.ts).
  */
 
 import {
@@ -16,16 +17,21 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
-import db from "./db.js";
+import db, {
+  getAllChannels,
+  getChannelById,
+  getChannelsForAgent,
+  getChannelsForUser,
+  isChannelMember,
+} from "./db.js";
 import { logger } from "./logger.js";
+
+// Re-export Channel type from db for convenience
+export type { Channel } from "./db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const CHANNELS_DIR = resolve(PROJECT_ROOT, ".agents/channels");
-
-// Available channels
-export const CHANNELS = ["team", "research"] as const;
-export type ChannelId = (typeof CHANNELS)[number];
 
 // Channel message structure
 export interface ChannelMessage {
@@ -59,15 +65,17 @@ const upsertReadState = db.prepare(
 );
 
 /**
- * Ensure channels directory and files exist
+ * Ensure channels directory exists and create JSONL files for any channels
  */
 export function initChannels(): void {
   if (!existsSync(CHANNELS_DIR)) {
     mkdirSync(CHANNELS_DIR, { recursive: true });
   }
 
-  for (const channel of CHANNELS) {
-    const path = getChannelPath(channel);
+  // Create JSONL files for all channels in the database
+  const channels = getAllChannels();
+  for (const channel of channels) {
+    const path = getChannelPath(channel.id);
     if (!existsSync(path)) {
       writeFileSync(path, "");
     }
@@ -82,10 +90,11 @@ function getChannelPath(channel: string): string {
 }
 
 /**
- * Validate channel name
+ * Validate channel exists in database
  */
-export function isValidChannel(channel: string): channel is ChannelId {
-  return CHANNELS.includes(channel as ChannelId);
+export function isValidChannel(channel: string): boolean {
+  const ch = getChannelById(channel);
+  return !!ch;
 }
 
 /**
@@ -132,7 +141,12 @@ export function appendChannelMessage(
     thread_id: threadId || null,
   };
 
+  // Ensure JSONL file exists
   const path = getChannelPath(channel);
+  if (!existsSync(path)) {
+    writeFileSync(path, "");
+  }
+
   appendFileSync(path, `${JSON.stringify(message)}\n`);
 
   // Notify listeners of the new message
@@ -235,10 +249,47 @@ export function getLastReadTimestamp(
 }
 
 /**
- * List all available channels
+ * List all available channels (from database)
  */
-export function listChannels(): ChannelId[] {
-  return [...CHANNELS];
+export function listChannels(): Channel[] {
+  return getAllChannels();
+}
+
+/**
+ * List channels for a specific user
+ */
+export function listChannelsForUser(userId: string): Channel[] {
+  return getChannelsForUser(userId);
+}
+
+/**
+ * List channels for a specific agent
+ */
+export function listChannelsForAgent(agentId: string): Channel[] {
+  return getChannelsForAgent(agentId);
+}
+
+/**
+ * Check if a user/agent can access a channel
+ */
+export function canAccessChannel(
+  channelId: string,
+  memberType: "user" | "agent",
+  memberId: string
+): boolean {
+  // Check if channel exists
+  const channel = getChannelById(channelId);
+  if (!channel) {
+    return false;
+  }
+
+  // System-owned channels are accessible to all (backward compatibility)
+  if (channel.owner_id === "system") {
+    return true;
+  }
+
+  // Check membership
+  return isChannelMember(channelId, memberType, memberId);
 }
 
 /**
@@ -246,15 +297,18 @@ export function listChannels(): ChannelId[] {
  */
 export function getUnreadCountsForAgent(
   agentId: string
-): Record<ChannelId, number> {
+): Record<string, number> {
   const counts: Record<string, number> = {};
 
-  for (const channel of CHANNELS) {
-    const unread = getUnreadChannelMessages(channel, agentId);
-    counts[channel] = unread.length;
+  // Get channels this agent is a member of
+  const channels = getChannelsForAgent(agentId);
+
+  for (const channel of channels) {
+    const unread = getUnreadChannelMessages(channel.id, agentId);
+    counts[channel.id] = unread.length;
   }
 
-  return counts as Record<ChannelId, number>;
+  return counts;
 }
 
 // Message listeners for real-time notifications
@@ -290,5 +344,5 @@ function notifyListeners(channel: string, message: ChannelMessage): void {
   }
 }
 
-// Initialize channels on module load
+// Initialize channels directory on module load
 initChannels();

@@ -10,13 +10,21 @@ import { serveStatic } from "hono/bun";
 import {
   appendChannelMessage,
   type ChannelMessage,
+  canAccessChannel,
   isValidChannel,
   listChannels,
+  listChannelsForUser,
   onChannelMessage,
   readChannelMessages,
 } from "./channels.js";
 import {
+  addChannelMember,
+  createChannel,
+  deleteChannel,
   getAllMessages,
+  getChannelById,
+  getChannelMemberRole,
+  getChannelMembers,
   getMessagesByFromAgent,
   getMessagesByToAgent,
   getStandupsByDate,
@@ -27,6 +35,7 @@ import {
   getTodayStandups,
   getUnreadMessages,
   getUserById,
+  removeChannelMember,
   sendMessage,
   updatePassword,
   validatePassword,
@@ -505,24 +514,229 @@ function runHttpServer() {
 
   // Channel API Routes
 
-  // List available channels
+  // Helper to get user ID from request headers (injected by dashboard proxy)
+  function getUserIdFromRequest(c: {
+    req: { header: (name: string) => string | undefined };
+  }): string | null {
+    return c.req.header("x-user-id") || null;
+  }
+
+  // List available channels (filtered by user membership)
   app.get("/api/channels", (c) => {
-    const channels = listChannels();
+    const userId = getUserIdFromRequest(c);
+
+    // If no user ID (direct API access or agent), return all channels
+    const channels = userId ? listChannelsForUser(userId) : listChannels();
+
     return c.json({
       channels: channels.map((ch) => ({
-        id: ch,
-        name: `#${ch}`,
+        id: ch.id,
+        name: ch.name,
+        description: ch.description,
+        owner_id: ch.owner_id,
       })),
     });
+  });
+
+  // Create a new channel
+  app.post("/api/channels", async (c) => {
+    const userId = getUserIdFromRequest(c);
+
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    try {
+      const body = await c.req.json();
+      const { id, name, description } = body;
+
+      if (!id || typeof id !== "string" || !/^[a-z0-9-]+$/.test(id)) {
+        return c.json(
+          { error: "Channel ID must be lowercase alphanumeric with hyphens" },
+          400
+        );
+      }
+
+      if (!name || typeof name !== "string" || !name.trim()) {
+        return c.json({ error: "Channel name is required" }, 400);
+      }
+
+      // Check if channel already exists
+      if (getChannelById(id)) {
+        return c.json({ error: "Channel already exists" }, 409);
+      }
+
+      // Get project path from environment or use default
+      const projectPath = process.env.PROJECT_PATH || process.cwd();
+
+      const channel = createChannel(
+        id,
+        name.trim(),
+        projectPath,
+        userId,
+        description
+      );
+
+      // Add all agents to the new channel by default
+      for (const agent of ["alice", "bob", "charlie"]) {
+        addChannelMember(id, "agent", agent, "member");
+      }
+
+      broadcast("channel_created", { channel });
+
+      return c.json({ success: true, channel }, 201);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: msg }, 500);
+    }
+  });
+
+  // Delete a channel (owner only)
+  app.delete("/api/channels/:channel", (c) => {
+    const channelId = c.req.param("channel");
+    const userId = getUserIdFromRequest(c);
+
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const channel = getChannelById(channelId);
+    if (!channel) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
+
+    // Only owner can delete (system channels cannot be deleted)
+    if (channel.owner_id !== userId) {
+      return c.json(
+        { error: "Only the channel owner can delete a channel" },
+        403
+      );
+    }
+
+    if (channel.owner_id === "system") {
+      return c.json({ error: "System channels cannot be deleted" }, 403);
+    }
+
+    const deleted = deleteChannel(channelId);
+    if (!deleted) {
+      return c.json({ error: "Failed to delete channel" }, 500);
+    }
+
+    broadcast("channel_deleted", { channel_id: channelId });
+
+    return c.json({ success: true });
+  });
+
+  // Get channel members
+  app.get("/api/channels/:channel/members", (c) => {
+    const channelId = c.req.param("channel");
+    const userId = getUserIdFromRequest(c);
+
+    const channel = getChannelById(channelId);
+    if (!channel) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
+
+    // Check access (system channels are public)
+    if (
+      channel.owner_id !== "system" &&
+      userId &&
+      !canAccessChannel(channelId, "user", userId)
+    ) {
+      return c.json({ error: "Not a member of this channel" }, 403);
+    }
+
+    const members = getChannelMembers(channelId);
+    return c.json({ channel_id: channelId, members });
+  });
+
+  // Add/remove channel members (owner/admin only)
+  app.patch("/api/channels/:channel/members", async (c) => {
+    const channelId = c.req.param("channel");
+    const userId = getUserIdFromRequest(c);
+
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const channel = getChannelById(channelId);
+    if (!channel) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
+
+    // Check if user is owner or admin
+    const userRole = getChannelMemberRole(channelId, "user", userId);
+    if (userRole !== "owner" && userRole !== "admin") {
+      return c.json({ error: "Only owner or admin can modify members" }, 403);
+    }
+
+    try {
+      const body = await c.req.json();
+      const { action, member_type, member_id, role } = body;
+
+      if (!["add", "remove"].includes(action)) {
+        return c.json({ error: "Action must be 'add' or 'remove'" }, 400);
+      }
+
+      if (!["user", "agent"].includes(member_type)) {
+        return c.json({ error: "Member type must be 'user' or 'agent'" }, 400);
+      }
+
+      if (!member_id || typeof member_id !== "string") {
+        return c.json({ error: "Member ID is required" }, 400);
+      }
+
+      if (action === "add") {
+        const memberRole = role || "member";
+        if (!["member", "admin"].includes(memberRole)) {
+          return c.json({ error: "Role must be 'member' or 'admin'" }, 400);
+        }
+        addChannelMember(channelId, member_type, member_id, memberRole);
+        broadcast("channel_member_added", {
+          channel_id: channelId,
+          member_type,
+          member_id,
+          role: memberRole,
+        });
+      } else {
+        // Cannot remove the owner
+        if (member_type === "user" && member_id === channel.owner_id) {
+          return c.json({ error: "Cannot remove the channel owner" }, 400);
+        }
+        removeChannelMember(channelId, member_type, member_id);
+        broadcast("channel_member_removed", {
+          channel_id: channelId,
+          member_type,
+          member_id,
+        });
+      }
+
+      return c.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: msg }, 500);
+    }
   });
 
   // Get messages from a channel
   app.get("/api/channels/:channel/messages", (c) => {
     const channel = c.req.param("channel");
-    const limit = Number.parseInt(c.req.query("limit") || "50");
+    const limit = Number.parseInt(c.req.query("limit") || "50", 10);
+    const userId = getUserIdFromRequest(c);
 
     if (!isValidChannel(channel)) {
       return c.json({ error: `Invalid channel: ${channel}` }, 400);
+    }
+
+    // Check access for non-system channels
+    const channelData = getChannelById(channel);
+    if (
+      channelData &&
+      channelData.owner_id !== "system" &&
+      userId &&
+      !canAccessChannel(channel, "user", userId)
+    ) {
+      return c.json({ error: "Not a member of this channel" }, 403);
     }
 
     const messages = readChannelMessages(channel, limit);
@@ -532,9 +746,22 @@ function runHttpServer() {
   // Post a message to a channel
   app.post("/api/channels/:channel/messages", async (c) => {
     const channel = c.req.param("channel");
+    const userId = getUserIdFromRequest(c);
+    const username = c.req.header("x-username") || "user";
 
     if (!isValidChannel(channel)) {
       return c.json({ error: `Invalid channel: ${channel}` }, 400);
+    }
+
+    // Check access for non-system channels
+    const channelData = getChannelById(channel);
+    if (
+      channelData &&
+      channelData.owner_id !== "system" &&
+      userId &&
+      !canAccessChannel(channel, "user", userId)
+    ) {
+      return c.json({ error: "Not a member of this channel" }, 403);
     }
 
     try {
@@ -552,8 +779,8 @@ function runHttpServer() {
         );
       }
 
-      // Always use "user" for dashboard messages
-      const message = appendChannelMessage(channel, "user", content);
+      // Use username from header if available, otherwise "user"
+      const message = appendChannelMessage(channel, username, content);
 
       // Broadcast to WebSocket clients
       broadcast("channel_message", { channel, message });

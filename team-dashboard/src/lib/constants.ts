@@ -31,33 +31,29 @@ export const AGENTS = {
 
 export type AgentId = keyof typeof AGENTS;
 
-// Channel definitions
-export const CHANNELS = [
-  {
-    id: "team",
-    name: "team",
-    description: "Team broadcast channel",
-  },
-  {
-    id: "research",
-    name: "research",
-    description: "Research discussion",
-  },
-] as const;
-
-export type ChannelId = (typeof CHANNELS)[number]["id"];
+// Channel type for API responses
+// Note: Channels are now fetched dynamically from the API
+// See NavChannels component and /api/backend/channels endpoint
+export interface Channel {
+  id: string;
+  name: string;
+  description?: string;
+  owner_id?: string;
+}
 
 // Get agent by ID with fallback
 export function getAgent(id: string) {
-  return AGENTS[id as AgentId] || {
-    id,
-    name: id.charAt(0).toUpperCase() + id.slice(1),
-    avatar: undefined as string | undefined,
-    color: "muted",
-    bgColor: "bg-muted-foreground",
-    textColor: "text-muted-foreground",
-    borderColor: "border-muted-foreground",
-  };
+  return (
+    AGENTS[id as AgentId] || {
+      id,
+      name: id.charAt(0).toUpperCase() + id.slice(1),
+      avatar: undefined as string | undefined,
+      color: "muted",
+      bgColor: "bg-muted-foreground",
+      textColor: "text-muted-foreground",
+      borderColor: "border-muted-foreground",
+    }
+  );
 }
 
 // Health status colors

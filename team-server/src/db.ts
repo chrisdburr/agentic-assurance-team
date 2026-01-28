@@ -53,6 +53,45 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_standups_date ON standups(date);
   CREATE INDEX IF NOT EXISTS idx_standups_session ON standups(session_id);
   CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+  -- Session registry (channel sessions shared, DM sessions per-user)
+  CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL CHECK(type IN ('channel', 'dm')),
+    user_id TEXT,
+    channel_id TEXT,
+    project_path TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    session_id TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(type, user_id, channel_id, project_path, agent_id)
+  );
+
+  -- Dynamic channels (replaces hardcoded CHANNELS array)
+  CREATE TABLE IF NOT EXISTS channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    project_path TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Channel membership (users and agents)
+  CREATE TABLE IF NOT EXISTS channel_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    member_type TEXT NOT NULL CHECK(member_type IN ('user', 'agent')),
+    member_id TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'admin', 'member')),
+    joined_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(channel_id, member_type, member_id),
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sessions_lookup ON sessions(type, user_id, channel_id, project_path, agent_id);
+  CREATE INDEX IF NOT EXISTS idx_channel_members_channel ON channel_members(channel_id);
+  CREATE INDEX IF NOT EXISTS idx_channel_members_member ON channel_members(member_type, member_id);
 `);
 
 // Prepared statements
@@ -147,6 +186,76 @@ const updateUserPassword = db.prepare(
 );
 
 const countUsers = db.prepare("SELECT COUNT(*) as count FROM users");
+
+// Session prepared statements
+const selectSession = db.prepare(
+  `SELECT session_id FROM sessions
+   WHERE type = $type
+   AND (user_id = $userId OR (user_id IS NULL AND $userId IS NULL))
+   AND (channel_id = $channelId OR (channel_id IS NULL AND $channelId IS NULL))
+   AND project_path = $projectPath
+   AND agent_id = $agentId`
+);
+
+const insertSession = db.prepare(
+  `INSERT INTO sessions (type, user_id, channel_id, project_path, agent_id, session_id)
+   VALUES ($type, $userId, $channelId, $projectPath, $agentId, $sessionId)`
+);
+
+// Channel prepared statements
+const insertChannel = db.prepare(
+  `INSERT INTO channels (id, name, description, project_path, owner_id)
+   VALUES ($id, $name, $description, $projectPath, $ownerId)`
+);
+
+const selectChannelById = db.prepare("SELECT * FROM channels WHERE id = $id");
+
+const selectAllChannels = db.prepare(
+  "SELECT * FROM channels ORDER BY created_at"
+);
+
+const selectChannelsByProject = db.prepare(
+  "SELECT * FROM channels WHERE project_path = $projectPath ORDER BY created_at"
+);
+
+const deleteChannelById = db.prepare("DELETE FROM channels WHERE id = $id");
+
+// Channel member prepared statements
+const insertChannelMember = db.prepare(
+  `INSERT OR REPLACE INTO channel_members (channel_id, member_type, member_id, role)
+   VALUES ($channelId, $memberType, $memberId, $role)`
+);
+
+const selectChannelMember = db.prepare(
+  `SELECT * FROM channel_members
+   WHERE channel_id = $channelId AND member_type = $memberType AND member_id = $memberId`
+);
+
+const selectChannelMembers = db.prepare(
+  "SELECT * FROM channel_members WHERE channel_id = $channelId ORDER BY joined_at"
+);
+
+const deleteChannelMember = db.prepare(
+  `DELETE FROM channel_members
+   WHERE channel_id = $channelId AND member_type = $memberType AND member_id = $memberId`
+);
+
+const selectChannelsForUser = db.prepare(
+  `SELECT DISTINCT c.* FROM channels c
+   LEFT JOIN channel_members cm ON c.id = cm.channel_id
+   WHERE c.owner_id = $userId
+   OR (cm.member_type = 'user' AND cm.member_id = $userId)
+   ORDER BY c.created_at`
+);
+
+const selectChannelsForAgent = db.prepare(
+  `SELECT DISTINCT c.* FROM channels c
+   LEFT JOIN channel_members cm ON c.id = cm.channel_id
+   WHERE cm.member_type = 'agent' AND cm.member_id = $agentId
+   ORDER BY c.created_at`
+);
+
+const countChannels = db.prepare("SELECT COUNT(*) as count FROM channels");
 
 // Message functions
 export function sendMessage(
@@ -392,6 +501,201 @@ export async function validatePassword(
   return isValid ? user : null;
 }
 
+// Session functions
+export function getOrCreateSession(
+  type: "channel" | "dm",
+  projectPath: string,
+  agentId: string,
+  userId?: string,
+  channelId?: string
+): string {
+  // Look for existing session
+  const existing = selectSession.get({
+    $type: type,
+    $userId: userId || null,
+    $channelId: channelId || null,
+    $projectPath: projectPath,
+    $agentId: agentId,
+  }) as { session_id: string } | undefined;
+
+  if (existing) {
+    return existing.session_id;
+  }
+
+  // Create new session with UUID
+  const sessionId = `${type}-${agentId}-${nanoid()}`;
+
+  insertSession.run({
+    $type: type,
+    $userId: userId || null,
+    $channelId: channelId || null,
+    $projectPath: projectPath,
+    $agentId: agentId,
+    $sessionId: sessionId,
+  });
+
+  return sessionId;
+}
+
+// Channel functions
+export function createChannel(
+  id: string,
+  name: string,
+  projectPath: string,
+  ownerId: string,
+  description?: string
+): Channel {
+  const now = new Date().toISOString();
+
+  insertChannel.run({
+    $id: id,
+    $name: name,
+    $description: description || null,
+    $projectPath: projectPath,
+    $ownerId: ownerId,
+  });
+
+  // Add owner as a member with owner role
+  insertChannelMember.run({
+    $channelId: id,
+    $memberType: "user",
+    $memberId: ownerId,
+    $role: "owner",
+  });
+
+  return {
+    id,
+    name,
+    description: description || null,
+    project_path: projectPath,
+    owner_id: ownerId,
+    created_at: now,
+  };
+}
+
+export function getChannelById(id: string): Channel | undefined {
+  return selectChannelById.get({ $id: id }) as Channel | undefined;
+}
+
+export function getAllChannels(): Channel[] {
+  return selectAllChannels.all() as Channel[];
+}
+
+export function getChannelsByProject(projectPath: string): Channel[] {
+  return selectChannelsByProject.all({
+    $projectPath: projectPath,
+  }) as Channel[];
+}
+
+export function deleteChannel(id: string): boolean {
+  const result = deleteChannelById.run({ $id: id });
+  return result.changes > 0;
+}
+
+// Channel member functions
+export function addChannelMember(
+  channelId: string,
+  memberType: "user" | "agent",
+  memberId: string,
+  role: "owner" | "admin" | "member" = "member"
+): void {
+  insertChannelMember.run({
+    $channelId: channelId,
+    $memberType: memberType,
+    $memberId: memberId,
+    $role: role,
+  });
+}
+
+export function removeChannelMember(
+  channelId: string,
+  memberType: "user" | "agent",
+  memberId: string
+): boolean {
+  const result = deleteChannelMember.run({
+    $channelId: channelId,
+    $memberType: memberType,
+    $memberId: memberId,
+  });
+  return result.changes > 0;
+}
+
+export function isChannelMember(
+  channelId: string,
+  memberType: "user" | "agent",
+  memberId: string
+): boolean {
+  const member = selectChannelMember.get({
+    $channelId: channelId,
+    $memberType: memberType,
+    $memberId: memberId,
+  });
+  return !!member;
+}
+
+export function getChannelMembers(channelId: string): ChannelMember[] {
+  return selectChannelMembers.all({ $channelId: channelId }) as ChannelMember[];
+}
+
+export function getChannelsForUser(userId: string): Channel[] {
+  return selectChannelsForUser.all({ $userId: userId }) as Channel[];
+}
+
+export function getChannelsForAgent(agentId: string): Channel[] {
+  return selectChannelsForAgent.all({ $agentId: agentId }) as Channel[];
+}
+
+export function getChannelMemberRole(
+  channelId: string,
+  memberType: "user" | "agent",
+  memberId: string
+): "owner" | "admin" | "member" | null {
+  const member = selectChannelMember.get({
+    $channelId: channelId,
+    $memberType: memberType,
+    $memberId: memberId,
+  }) as ChannelMember | undefined;
+  return member?.role || null;
+}
+
+// Seed default channels on startup
+function seedDefaultChannels(): void {
+  const result = countChannels.get() as { count: number };
+  if (result.count > 0) {
+    return; // Channels already exist
+  }
+
+  console.log("[DB] Seeding default channels: team, research");
+
+  // Create default channels with "system" owner
+  const projectPath = PROJECT_ROOT;
+
+  try {
+    createChannel(
+      "team",
+      "team",
+      projectPath,
+      "system",
+      "Team broadcast channel"
+    );
+    createChannel(
+      "research",
+      "research",
+      projectPath,
+      "system",
+      "Research discussion"
+    );
+
+    // Add all agents to default channels
+    for (const agent of ["alice", "bob", "charlie"]) {
+      addChannelMember("team", "agent", agent, "member");
+      addChannelMember("research", "agent", agent, "member");
+    }
+  } catch (err) {
+    console.error("[DB] Error seeding default channels:", err);
+  }
+}
+
 // Seed default user from env vars on startup (backward compatibility)
 async function seedDefaultUser(): Promise<void> {
   const result = countUsers.get() as { count: number };
@@ -413,7 +717,8 @@ async function seedDefaultUser(): Promise<void> {
   await createUser(username, `${username}@team.local`, password);
 }
 
-// Run seed on module load
+// Run seeds on module load
+seedDefaultChannels();
 seedDefaultUser().catch((err) => {
   console.error("[DB] Failed to seed default user:", err);
 });
@@ -460,6 +765,35 @@ export interface User {
   password_hash: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  description: string | null;
+  project_path: string;
+  owner_id: string;
+  created_at: string;
+}
+
+export interface ChannelMember {
+  id: number;
+  channel_id: string;
+  member_type: "user" | "agent";
+  member_id: string;
+  role: "owner" | "admin" | "member";
+  joined_at: string;
+}
+
+export interface Session {
+  id: number;
+  type: "channel" | "dm";
+  user_id: string | null;
+  channel_id: string | null;
+  project_path: string;
+  agent_id: string;
+  session_id: string;
+  created_at: string;
 }
 
 export default db;
