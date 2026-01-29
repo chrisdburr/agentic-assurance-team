@@ -26,8 +26,11 @@ import {
 import {
   addChannelMember,
   createChannel,
+  createUser,
   deleteChannel,
+  deleteUser,
   getAllMessages,
+  getAllUsers,
   getChannelById,
   getChannelMemberRole,
   getChannelMembers,
@@ -42,10 +45,12 @@ import {
   getUnreadMessages,
   getUserById,
   isChannelMember,
+  isUserAdmin,
   removeChannelMember,
   sendMessage,
   transferChannelOwnership,
   updatePassword,
+  updateUser,
   validatePassword,
 } from "./db.js";
 import {
@@ -352,6 +357,7 @@ function runHttpServer() {
           id: user.id,
           username: user.username,
           email: user.email,
+          is_admin: user.is_admin,
         },
       });
     } catch (error) {
@@ -404,6 +410,147 @@ function runHttpServer() {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ success: false, error: message }, 500);
     }
+  });
+
+  // User management endpoints (admin only)
+  app.get("/api/users", (c) => {
+    const userId = getUserIdFromRequest(c);
+    if (!(userId && isUserAdmin(userId))) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+
+    const users = getAllUsers();
+    return c.json({ users });
+  });
+
+  app.post("/api/users", async (c) => {
+    const userId = getUserIdFromRequest(c);
+    if (!(userId && isUserAdmin(userId))) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+
+    try {
+      const body = await c.req.json();
+      const { username, email, password, is_admin } = body;
+
+      if (!username || typeof username !== "string" || !username.trim()) {
+        return c.json({ error: "Username is required" }, 400);
+      }
+      if (!email || typeof email !== "string" || !email.trim()) {
+        return c.json({ error: "Email is required" }, 400);
+      }
+      if (!password || typeof password !== "string" || password.length < 8) {
+        return c.json({ error: "Password must be at least 8 characters" }, 400);
+      }
+
+      const user = await createUser(
+        username.trim(),
+        email.trim(),
+        password,
+        is_admin === true
+      );
+
+      // Return user without password_hash
+      return c.json(
+        {
+          success: true,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            is_admin: user.is_admin,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
+          },
+        },
+        201
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("UNIQUE constraint")) {
+        return c.json({ error: "Username or email already exists" }, 409);
+      }
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.patch("/api/users/:id", async (c) => {
+    const adminUserId = getUserIdFromRequest(c);
+    if (!(adminUserId && isUserAdmin(adminUserId))) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+
+    const targetUserId = c.req.param("id");
+    const existingUser = getUserById(targetUserId);
+    if (!existingUser) {
+      return c.json({ error: "User not found" }, 404);
+    }
+
+    try {
+      const body = await c.req.json();
+      const { email, is_admin } = body;
+
+      const updates: { email?: string; is_admin?: boolean } = {};
+      if (email !== undefined) {
+        if (typeof email !== "string" || !email.trim()) {
+          return c.json({ error: "Invalid email" }, 400);
+        }
+        updates.email = email.trim();
+      }
+      if (is_admin !== undefined) {
+        updates.is_admin = is_admin === true;
+      }
+
+      const success = updateUser(targetUserId, updates);
+      if (!success) {
+        return c.json({ error: "Failed to update user" }, 500);
+      }
+
+      const updatedUser = getUserById(targetUserId);
+      return c.json({
+        success: true,
+        user: {
+          id: updatedUser?.id,
+          username: updatedUser?.username,
+          email: updatedUser?.email,
+          is_admin: updatedUser?.is_admin,
+          created_at: updatedUser?.created_at,
+          updated_at: updatedUser?.updated_at,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("UNIQUE constraint")) {
+        return c.json({ error: "Email already exists" }, 409);
+      }
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.delete("/api/users/:id", (c) => {
+    const adminUserId = getUserIdFromRequest(c);
+    if (!(adminUserId && isUserAdmin(adminUserId))) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+
+    const targetUserId = c.req.param("id");
+
+    // Prevent self-deletion
+    if (targetUserId === adminUserId) {
+      return c.json({ error: "Cannot delete your own account" }, 400);
+    }
+
+    const existingUser = getUserById(targetUserId);
+    if (!existingUser) {
+      return c.json({ error: "User not found" }, 404);
+    }
+
+    const success = deleteUser(targetUserId);
+    if (!success) {
+      return c.json({ error: "Failed to delete user" }, 500);
+    }
+
+    return c.json({ success: true });
   });
 
   // Broadcast endpoint for MCP processes to notify WebSocket clients

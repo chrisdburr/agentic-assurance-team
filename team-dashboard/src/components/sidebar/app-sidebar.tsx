@@ -14,6 +14,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { NavAdmin } from "./nav-admin";
 import { NavChannels } from "./nav-channels";
 import { NavDMs } from "./nav-dms";
 import { NavUser } from "./nav-user";
@@ -78,6 +79,8 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <Separator className="my-2" />
+        <NavAdmin />
       </SidebarContent>
 
       <SidebarFooter className="p-4">

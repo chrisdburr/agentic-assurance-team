@@ -14,7 +14,7 @@ const API_BASE = "/api/backend";
 
 // Fetch messages with optional filters (for DMs)
 export async function fetchMessages(
-  filter?: MessageFilter,
+  filter?: MessageFilter
 ): Promise<Message[]> {
   const params = new URLSearchParams();
   if (filter?.to_agent) params.set("to_agent", filter.to_agent);
@@ -32,7 +32,7 @@ export async function fetchMessages(
 
 // Fetch messages for a channel (uses new JSONL-based channel API)
 export async function fetchChannelMessages(
-  channel: string,
+  channel: string
 ): Promise<ChannelMessage[]> {
   const res = await fetch(`${API_BASE}/channels/${channel}/messages`);
   if (!res.ok) throw new Error(`Failed to fetch channel messages: ${channel}`);
@@ -43,7 +43,7 @@ export async function fetchChannelMessages(
 // Send a message to a channel
 export async function sendChannelMessage(
   channel: string,
-  content: string,
+  content: string
 ): Promise<{ success: boolean; message: ChannelMessage }> {
   const res = await fetch(`${API_BASE}/channels/${channel}/messages`, {
     method: "POST",
@@ -77,7 +77,7 @@ export async function fetchDMMessages(agent: string): Promise<Message[]> {
   const all = [...userToAgent, ...agentToUser];
   const unique = Array.from(new Map(all.map((m) => [m.id, m])).values());
   return unique.sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 }
 
@@ -101,7 +101,7 @@ export async function fetchRoster(): Promise<RosterEntry[]> {
 export async function sendMessage(
   to: string,
   content: string,
-  threadId?: string,
+  threadId?: string
 ): Promise<{ success: boolean; message_id: string; thread_id: string }> {
   const res = await fetch(`${API_BASE}/messages`, {
     method: "POST",
@@ -126,7 +126,7 @@ export async function fetchMonitoringData(): Promise<MonitoringData> {
 
 // Manually trigger an agent
 export async function triggerAgent(
-  agent: string,
+  agent: string
 ): Promise<{ success: boolean; error?: string }> {
   const res = await fetch(`${API_BASE}/dispatcher/trigger/${agent}`, {
     method: "POST",
@@ -181,7 +181,7 @@ export async function startStandup(): Promise<{
 export async function changePassword(
   userId: string,
   currentPassword: string,
-  newPassword: string,
+  newPassword: string
 ): Promise<{ success: boolean; error?: string }> {
   const res = await fetch(`${API_BASE}/auth/change-password`, {
     method: "POST",
@@ -208,7 +208,7 @@ export interface ChannelMember {
 
 // Fetch channel members
 export async function fetchChannelMembers(
-  channelId: string,
+  channelId: string
 ): Promise<ChannelMember[]> {
   const res = await fetch(`${API_BASE}/channels/${channelId}/members`);
   if (!res.ok) {
@@ -226,7 +226,7 @@ export async function addChannelMember(
   channelId: string,
   memberType: "user" | "agent",
   memberId: string,
-  role: "member" | "admin" = "member",
+  role: "member" | "admin" = "member"
 ): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/channels/${channelId}/members`, {
     method: "PATCH",
@@ -251,7 +251,7 @@ export async function addChannelMember(
 export async function removeChannelMember(
   channelId: string,
   memberType: "user" | "agent",
-  memberId: string,
+  memberId: string
 ): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/channels/${channelId}/members`, {
     method: "PATCH",
@@ -274,7 +274,7 @@ export async function removeChannelMember(
 // Transfer channel ownership
 export async function transferChannelOwnership(
   channelId: string,
-  newOwnerId: string,
+  newOwnerId: string
 ): Promise<{ success: boolean; new_owner_id: string }> {
   const res = await fetch(
     `${API_BASE}/channels/${channelId}/transfer-ownership`,
@@ -282,7 +282,7 @@ export async function transferChannelOwnership(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ new_owner_id: newOwnerId }),
-    },
+    }
   );
   if (!res.ok) {
     const error = await res
@@ -295,7 +295,7 @@ export async function transferChannelOwnership(
 
 // Delete a channel
 export async function deleteChannel(
-  channelId: string,
+  channelId: string
 ): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/channels/${channelId}`, {
     method: "DELETE",
@@ -334,7 +334,7 @@ export async function fetchAgent(id: string): Promise<Agent> {
 
 // Create a new agent
 export async function createAgentApi(
-  input: CreateAgentInput,
+  input: CreateAgentInput
 ): Promise<{ success: boolean; agent: Agent }> {
   const res = await fetch(`${API_BASE}/agents`, {
     method: "POST",
@@ -346,6 +346,87 @@ export async function createAgentApi(
       .json()
       .catch(() => ({ error: "Failed to create agent" }));
     throw new Error(error.error || "Failed to create agent");
+  }
+  return res.json();
+}
+
+// User management API functions (admin only)
+
+// User type for API responses
+export interface ApiUser {
+  id: string;
+  username: string;
+  email: string;
+  is_admin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Fetch all users (admin only)
+export async function fetchUsers(): Promise<ApiUser[]> {
+  const res = await fetch(`${API_BASE}/users`);
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to fetch users" }));
+    throw new Error(error.error || "Failed to fetch users");
+  }
+  const data = await res.json();
+  return data.users || [];
+}
+
+// Create a new user (admin only)
+export async function createUserApi(input: {
+  username: string;
+  email: string;
+  password: string;
+  is_admin?: boolean;
+}): Promise<{ success: boolean; user: ApiUser }> {
+  const res = await fetch(`${API_BASE}/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to create user" }));
+    throw new Error(error.error || "Failed to create user");
+  }
+  return res.json();
+}
+
+// Update a user (admin only)
+export async function updateUserApi(
+  userId: string,
+  input: { email?: string; is_admin?: boolean }
+): Promise<{ success: boolean; user: ApiUser }> {
+  const res = await fetch(`${API_BASE}/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to update user" }));
+    throw new Error(error.error || "Failed to update user");
+  }
+  return res.json();
+}
+
+// Delete a user (admin only)
+export async function deleteUserApi(
+  userId: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/users/${userId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to delete user" }));
+    throw new Error(error.error || "Failed to delete user");
   }
   return res.json();
 }

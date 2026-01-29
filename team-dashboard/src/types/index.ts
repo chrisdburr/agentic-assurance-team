@@ -113,3 +113,27 @@ export interface CreateAgentInput {
   system_prompt: string;
   allowed_tools?: string[];
 }
+
+// User from the admin API
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  is_admin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Input for creating a new user
+export interface CreateUserInput {
+  username: string;
+  email: string;
+  password: string;
+  is_admin?: boolean;
+}
+
+// Input for updating a user
+export interface UpdateUserInput {
+  email?: string;
+  is_admin?: boolean;
+}

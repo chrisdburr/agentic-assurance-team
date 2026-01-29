@@ -177,6 +177,7 @@ export const authConfig: NextAuthConfig = {
             name: data.user.username,
             email: data.user.email,
             username: data.user.username,
+            is_admin: data.user.is_admin ?? false,
           };
         } catch (error) {
           console.error("[AUTH] Error validating credentials:", error);
@@ -207,6 +208,7 @@ export const authConfig: NextAuthConfig = {
       if (user) {
         token.id = user.id;
         token.username = user.username ?? user.name ?? "";
+        token.is_admin = user.is_admin ?? false;
       }
       return token;
     },
@@ -214,6 +216,7 @@ export const authConfig: NextAuthConfig = {
       if (token && session.user) {
         session.user.id = token.id as string;
         session.user.username = token.username as string;
+        session.user.is_admin = token.is_admin as boolean;
       }
       return session;
     },

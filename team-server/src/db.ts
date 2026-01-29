@@ -44,6 +44,7 @@ db.exec(`
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    is_admin INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -93,6 +94,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_channel_members_channel ON channel_members(channel_id);
   CREATE INDEX IF NOT EXISTS idx_channel_members_member ON channel_members(member_type, member_id);
 `);
+
+// Migration: Add is_admin column if it doesn't exist
+try {
+  db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
+} catch {
+  // Column already exists, ignore error
+}
 
 // Prepared statements
 const insertMessage = db.prepare(
@@ -171,8 +179,8 @@ const selectAgentStatus = db.prepare(
 
 // User prepared statements
 const insertUser = db.prepare(
-  `INSERT INTO users (id, username, email, password_hash, created_at, updated_at)
-   VALUES ($id, $username, $email, $passwordHash, $createdAt, $updatedAt)`
+  `INSERT INTO users (id, username, email, password_hash, is_admin, created_at, updated_at)
+   VALUES ($id, $username, $email, $passwordHash, $isAdmin, $createdAt, $updatedAt)`
 );
 
 const selectUserByUsername = db.prepare(
@@ -181,9 +189,19 @@ const selectUserByUsername = db.prepare(
 
 const selectUserById = db.prepare("SELECT * FROM users WHERE id = $id");
 
+const selectAllUsers = db.prepare(
+  "SELECT id, username, email, is_admin, created_at, updated_at FROM users ORDER BY created_at DESC"
+);
+
 const updateUserPassword = db.prepare(
   "UPDATE users SET password_hash = $passwordHash, updated_at = $updatedAt WHERE id = $id"
 );
+
+const updateUserDetails = db.prepare(
+  "UPDATE users SET email = $email, is_admin = $isAdmin, updated_at = $updatedAt WHERE id = $id"
+);
+
+const deleteUserById = db.prepare("DELETE FROM users WHERE id = $id");
 
 const countUsers = db.prepare("SELECT COUNT(*) as count FROM users");
 
@@ -441,7 +459,8 @@ export function getTeamRoster(): TeamMember[] {
 export async function createUser(
   username: string,
   email: string,
-  password: string
+  password: string,
+  isAdmin = false
 ): Promise<User> {
   const id = nanoid();
   const now = new Date().toISOString();
@@ -452,6 +471,7 @@ export async function createUser(
     $username: username,
     $email: email,
     $passwordHash: passwordHash,
+    $isAdmin: isAdmin ? 1 : 0,
     $createdAt: now,
     $updatedAt: now,
   });
@@ -461,17 +481,92 @@ export async function createUser(
     username,
     email,
     password_hash: passwordHash,
+    is_admin: isAdmin,
     created_at: now,
     updated_at: now,
   };
 }
 
+export function getAllUsers(): Omit<User, "password_hash">[] {
+  const rows = selectAllUsers.all() as Array<{
+    id: string;
+    username: string;
+    email: string;
+    is_admin: number;
+    created_at: string;
+    updated_at: string;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    username: row.username,
+    email: row.email,
+    is_admin: row.is_admin === 1,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+export function deleteUser(userId: string): boolean {
+  const result = deleteUserById.run({ $id: userId });
+  return result.changes > 0;
+}
+
+export function updateUser(
+  userId: string,
+  updates: { email?: string; is_admin?: boolean }
+): boolean {
+  const user = getUserById(userId);
+  if (!user) {
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  const isAdmin =
+    updates.is_admin !== undefined ? updates.is_admin : user.is_admin;
+  const result = updateUserDetails.run({
+    $id: userId,
+    $email: updates.email ?? user.email,
+    $isAdmin: isAdmin ? 1 : 0,
+    $updatedAt: now,
+  });
+  return result.changes > 0;
+}
+
+export function isUserAdmin(userId: string): boolean {
+  const user = getUserById(userId);
+  return user?.is_admin === true;
+}
+
+interface UserRow {
+  id: string;
+  username: string;
+  email: string;
+  password_hash: string;
+  is_admin: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapUserRow(row: UserRow | undefined): User | undefined {
+  if (!row) {
+    return undefined;
+  }
+  return {
+    ...row,
+    is_admin: row.is_admin === 1,
+  };
+}
+
 export function getUserByUsername(username: string): User | undefined {
-  return selectUserByUsername.get({ $username: username }) as User | undefined;
+  const row = selectUserByUsername.get({ $username: username }) as
+    | UserRow
+    | undefined;
+  return mapUserRow(row);
 }
 
 export function getUserById(id: string): User | undefined {
-  return selectUserById.get({ $id: id }) as User | undefined;
+  const row = selectUserById.get({ $id: id }) as UserRow | undefined;
+  return mapUserRow(row);
 }
 
 export async function updatePassword(
@@ -743,8 +838,8 @@ async function seedDefaultUser(): Promise<void> {
     return;
   }
 
-  console.log(`[DB] Seeding default user: ${username}`);
-  await createUser(username, `${username}@team.local`, password);
+  console.log(`[DB] Seeding default user: ${username} (admin)`);
+  await createUser(username, `${username}@team.local`, password, true);
 }
 
 // Run seeds on module load
@@ -793,6 +888,7 @@ export interface User {
   username: string;
   email: string;
   password_hash: string;
+  is_admin: boolean;
   created_at: string;
   updated_at: string;
 }
