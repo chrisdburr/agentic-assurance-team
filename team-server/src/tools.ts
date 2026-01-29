@@ -1,5 +1,7 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  type SDKMessage,
+  unstable_v2_resumeSession,
+} from "@anthropic-ai/claude-agent-sdk";
 import {
   appendChannelMessage,
   type ChannelMessage,
@@ -24,9 +26,6 @@ import {
 import { getStandupQueueStatus, startStandupQueue } from "./dispatcher.js";
 import { logger } from "./logger.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = resolve(__dirname, "../..");
-
 // Safeguard constants for ask_agent
 const MAX_ASK_DEPTH = 3;
 const MAX_ASK_CALLS_PER_SESSION = 10;
@@ -34,6 +33,24 @@ const ASK_TIMEOUT_MS = 60_000; // 60 seconds
 
 // Track call count per session (resets when process restarts)
 let askCallCount = 0;
+
+// Default model for SDK V2 sessions
+const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+
+/**
+ * Extract text content from SDK message
+ */
+function extractTextContent(msg: SDKMessage): string | null {
+  if (msg.type === "assistant" && msg.message?.content) {
+    const textBlocks = msg.message.content.filter(
+      (block): block is { type: "text"; text: string } => block.type === "text"
+    );
+    if (textBlocks.length > 0) {
+      return textBlocks.map((b) => b.text).join("");
+    }
+  }
+  return null;
+}
 
 // Get agent ID from environment
 const getAgentId = (): string => {
@@ -563,44 +580,41 @@ export async function handleToolCall(
         }),
       }).catch(() => {});
 
-      try {
-        const proc = Bun.spawn(
-          [
-            "claude",
-            "-r",
-            sessionId,
-            `You are being asked a question by ${callerAgent}. Please respond directly and concisely.\n\nQuestion: ${question}`,
-            "-p",
-          ],
-          {
-            cwd: PROJECT_ROOT,
-            stdout: "pipe",
-            stderr: "pipe",
-            env: {
-              ...process.env,
-              AGENT_ID: agent,
-              ASK_DEPTH: String(currentDepth + 1),
-              ASK_CALLER_CHAIN: newCallerChain,
-            },
-          }
-        );
+      // Create SDK V2 session
+      const prompt = `You are being asked a question by ${callerAgent}. Please respond directly and concisely.\n\nQuestion: ${question}`;
+      const session = unstable_v2_resumeSession(sessionId, {
+        model: DEFAULT_MODEL,
+        allowedTools: [],
+        env: {
+          ...process.env,
+          AGENT_ID: agent,
+          ASK_DEPTH: String(currentDepth + 1),
+          ASK_CALLER_CHAIN: newCallerChain,
+        },
+        permissionMode: "bypassPermissions",
+      });
 
-        // Wait for completion with timeout
+      try {
+        await session.send(prompt);
+        let response = "";
+
+        // Timeout promise for the stream
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error("Timeout")), ASK_TIMEOUT_MS);
         });
 
-        const exitCode = await Promise.race([proc.exited, timeoutPromise]);
-
-        if (exitCode !== 0) {
-          return {
-            success: false,
-            error: `Agent ${agent} session exited with code ${exitCode}`,
-          };
-        }
-
-        // Capture response
-        const response = await new Response(proc.stdout).text();
+        // Stream response with timeout
+        await Promise.race([
+          (async () => {
+            for await (const msg of session.stream()) {
+              const text = extractTextContent(msg);
+              if (text) {
+                response += text;
+              }
+            }
+          })(),
+          timeoutPromise,
+        ]);
 
         // Broadcast completion to dashboard
         fetch(`http://localhost:${webPort}/api/broadcast`, {
@@ -620,7 +634,9 @@ export async function handleToolCall(
               timestamp: new Date().toISOString(),
             },
           }),
-        }).catch(() => {});
+        }).catch(() => {
+          // Ignore errors - server may not be running
+        });
 
         return {
           success: true,
@@ -643,6 +659,8 @@ export async function handleToolCall(
           success: false,
           error: `Failed to invoke ${agent}: ${message}`,
         };
+      } finally {
+        session.close();
       }
     }
 
