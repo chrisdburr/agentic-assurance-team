@@ -1,18 +1,8 @@
 "use client";
 
-import {
-  Activity,
-  Bot,
-  LogOut,
-  MessageSquare,
-  Settings,
-  Wifi,
-  WifiOff,
-} from "lucide-react";
+import { Activity, Bot, MessageSquare, Wifi, WifiOff } from "lucide-react";
 import Link from "next/link";
-import { signOut, useSession } from "next-auth/react";
-import { PasswordChangeDialog } from "@/components/settings/password-change-dialog";
-import { Button } from "@/components/ui/button";
+
 import { Separator } from "@/components/ui/separator";
 import {
   Sidebar,
@@ -26,9 +16,10 @@ import {
 import { useWebSocket } from "@/hooks/use-websocket";
 import { NavChannels } from "./nav-channels";
 import { NavDMs } from "./nav-dms";
+import { NavUser } from "./nav-user";
+import { SidebarSearch } from "./sidebar-search";
 
 export function AppSidebar() {
-  const { data: session } = useSession();
   const { isConnected, activeAgents } = useWebSocket();
 
   return (
@@ -61,6 +52,7 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <SidebarSearch />
       </SidebarHeader>
 
       <SidebarContent className="px-2">
@@ -89,27 +81,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-muted-foreground text-sm">
-            {session?.user?.name}
-          </span>
-          <div className="flex items-center gap-1">
-            <PasswordChangeDialog
-              trigger={
-                <Button size="icon" variant="ghost">
-                  <Settings className="h-4 w-4" />
-                </Button>
-              }
-            />
-            <Button
-              onClick={() => signOut({ callbackUrl: "/login" })}
-              size="icon"
-              variant="ghost"
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+        <NavUser />
       </SidebarFooter>
     </Sidebar>
   );

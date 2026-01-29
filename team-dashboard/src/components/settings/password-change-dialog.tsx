@@ -16,12 +16,24 @@ import { Input } from "@/components/ui/input";
 import { changePassword } from "@/lib/api";
 
 interface PasswordChangeDialogProps {
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  nativeButton?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function PasswordChangeDialog({ trigger }: PasswordChangeDialogProps) {
+export function PasswordChangeDialog({
+  trigger,
+  nativeButton = true,
+  open: controlledOpen,
+  onOpenChange,
+}: PasswordChangeDialogProps) {
   const { data: session } = useSession();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
+  const setOpen = isControlled ? onOpenChange! : setUncontrolledOpen;
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -84,7 +96,7 @@ export function PasswordChangeDialog({ trigger }: PasswordChangeDialogProps) {
       }, 1500);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to change password"
+        err instanceof Error ? err.message : "Failed to change password",
       );
     } finally {
       setIsLoading(false);
@@ -93,7 +105,11 @@ export function PasswordChangeDialog({ trigger }: PasswordChangeDialogProps) {
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger && (
+        <DialogTrigger asChild nativeButton={nativeButton}>
+          {trigger}
+        </DialogTrigger>
+      )}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Change Password</DialogTitle>
