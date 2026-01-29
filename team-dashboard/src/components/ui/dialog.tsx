@@ -22,14 +22,17 @@ function Dialog({
 function DialogTrigger({
   asChild,
   children,
+  nativeButton = true,
   ...props
 }: ComponentProps<typeof DialogPrimitive.Trigger> & {
   asChild?: boolean;
+  nativeButton?: boolean;
 }) {
   if (asChild && isValidElement(children)) {
     return (
       <DialogPrimitive.Trigger
         data-slot="dialog-trigger"
+        nativeButton={nativeButton}
         render={children}
         {...props}
       />
