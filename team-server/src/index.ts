@@ -59,6 +59,7 @@ import {
   initDispatcher,
   manualTrigger,
   onStandupChannelMessage,
+  refreshAgentSession,
   startStandupQueue,
   triggerAgentForChannel,
 } from "./dispatcher.js";
@@ -87,7 +88,7 @@ function parseDMMentions(content: string): string[] {
 }
 
 // Trigger mentioned agents for a channel message
-async function triggerMentionedAgents(
+function triggerMentionedAgents(
   channel: string,
   message: ChannelMessage
 ): Promise<void> {
@@ -98,7 +99,12 @@ async function triggerMentionedAgents(
         "Channel",
         `Triggering ${agentId} for @mention in #${channel}`
       );
-      await triggerAgentForChannel(agentId, channel);
+      triggerAgentForChannel(
+        agentId,
+        channel,
+        message.from,
+        message.content.slice(0, 200)
+      );
     }
   }
 }
@@ -278,12 +284,20 @@ function runHttpServer() {
 
       // Immediately trigger the recipient agent if it's an AI agent
       // This provides faster response than waiting for polling
-      // Pass userId for DM session scoping (each user gets isolated context)
+      // Pass username so the agent knows who sent the message
       if (["alice", "bob", "charlie"].includes(to)) {
-        const userId = c.req.header("x-user-id") || undefined;
-        manualTrigger(to, userId).catch((err) => {
-          logger.error("API", `Failed to trigger ${to}: ${err}`);
-        });
+        const username = c.req.header("x-username") || "user";
+        const triggerResult = manualTrigger(
+          to,
+          username,
+          content.slice(0, 200)
+        );
+        if (!triggerResult.success) {
+          logger.error(
+            "API",
+            `Failed to trigger ${to}: ${triggerResult.error}`
+          );
+        }
       }
 
       return c.json(result, 201);
@@ -579,9 +593,19 @@ function runHttpServer() {
     return c.json(getDispatcherStatus());
   });
 
-  app.post("/api/dispatcher/trigger/:agent", async (c) => {
+  app.post("/api/dispatcher/trigger/:agent", (c) => {
     const agent = c.req.param("agent");
-    const result = await manualTrigger(agent);
+    const username = c.req.header("x-username") || undefined;
+    const result = manualTrigger(agent, username);
+    if (!result.success) {
+      return c.json(result, 400);
+    }
+    return c.json(result);
+  });
+
+  app.post("/api/dispatcher/refresh/:agent", (c) => {
+    const agent = c.req.param("agent");
+    const result = refreshAgentSession(agent);
     if (!result.success) {
       return c.json(result, 400);
     }
@@ -604,7 +628,8 @@ function runHttpServer() {
         );
       }
 
-      const channel = "team"; // Could be parameterized in the future
+      const body = await c.req.json().catch(() => ({}));
+      const channel = (body as { channel?: string }).channel || "team";
       const sessionId = startStandupQueue(channel);
 
       return c.json({

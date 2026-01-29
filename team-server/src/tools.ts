@@ -1,7 +1,5 @@
-import {
-  type SDKMessage,
-  unstable_v2_resumeSession,
-} from "@anthropic-ai/claude-agent-sdk";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   appendChannelMessage,
   type ChannelMessage,
@@ -12,6 +10,7 @@ import {
   readChannelMessages,
 } from "./channels.js";
 import {
+  getAgentSession,
   getStandupsBySession,
   getTeamRoster,
   getTeamStatus,
@@ -23,8 +22,15 @@ import {
   sendMessage,
   updateStatus,
 } from "./db.js";
-import { getStandupQueueStatus, startStandupQueue } from "./dispatcher.js";
+import {
+  buildDispatchContext,
+  getStandupQueueStatus,
+  startStandupQueue,
+} from "./dispatcher.js";
 import { logger } from "./logger.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, "../..");
 
 // Safeguard constants for ask_agent
 const MAX_ASK_DEPTH = 3;
@@ -33,24 +39,6 @@ const ASK_TIMEOUT_MS = 60_000; // 60 seconds
 
 // Track call count per session (resets when process restarts)
 let askCallCount = 0;
-
-// Default model for SDK V2 sessions
-const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
-
-/**
- * Extract text content from SDK message
- */
-function extractTextContent(msg: SDKMessage): string | null {
-  if (msg.type === "assistant" && msg.message?.content) {
-    const textBlocks = msg.message.content.filter(
-      (block): block is { type: "text"; text: string } => block.type === "text"
-    );
-    if (textBlocks.length > 0) {
-      return textBlocks.map((b) => b.text).join("");
-    }
-  }
-  return null;
-}
 
 // Get agent ID from environment
 const getAgentId = (): string => {
@@ -217,10 +205,16 @@ export const toolDefinitions = [
   {
     name: "standup_orchestrate",
     description:
-      "Start a full standup session, triggering each agent (Alice → Bob → Charlie) sequentially via their resumed sessions. Each agent posts their update to the team channel. Returns immediately with session ID - use standup_session_get to check progress.",
+      "Start a full standup session, triggering each agent (Alice → Bob → Charlie) sequentially via their resumed sessions. Each agent posts their update to the specified channel (defaults to #team). Returns immediately with session ID - use standup_session_get to check progress.",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        channel: {
+          type: "string",
+          description:
+            'Channel where agents post their standup updates (default: "team")',
+        },
+      },
     },
   },
   {
@@ -266,8 +260,7 @@ export const toolDefinitions = [
       properties: {
         channel: {
           type: "string",
-          enum: ["team", "research"],
-          description: "The channel to read from",
+          description: "The channel to read from (e.g., team, research, test)",
         },
         limit: {
           type: "number",
@@ -293,8 +286,7 @@ export const toolDefinitions = [
       properties: {
         channel: {
           type: "string",
-          enum: ["team", "research"],
-          description: "The channel to post to",
+          description: "The channel to post to (e.g., team, research, test)",
         },
         content: {
           type: "string",
@@ -454,7 +446,7 @@ export async function handleToolCall(
         };
       }
 
-      const channel = "team";
+      const channel = (args as { channel?: string }).channel || "team";
       const sessionId = startStandupQueue(channel);
 
       return {
@@ -544,14 +536,8 @@ export async function handleToolCall(
         };
       }
 
-      // Get target agent's session ID
-      const sessionId = process.env[`${agent.toUpperCase()}_SESSION_ID`];
-      if (!sessionId) {
-        return {
-          success: false,
-          error: `No session ID configured for ${agent}. Set ${agent.toUpperCase()}_SESSION_ID in environment.`,
-        };
-      }
+      // Get target agent's session ID from DB
+      const sessionId = getAgentSession(PROJECT_ROOT, agent);
 
       // Build new caller chain
       const newCallerChain = [...callerChain, callerAgent].join(",");
@@ -580,41 +566,48 @@ export async function handleToolCall(
         }),
       }).catch(() => {});
 
-      // Create SDK V2 session
-      const prompt = `You are being asked a question by ${callerAgent}. Please respond directly and concisely.\n\nQuestion: ${question}`;
-      const session = unstable_v2_resumeSession(sessionId, {
-        model: DEFAULT_MODEL,
-        allowedTools: [],
-        env: {
-          ...process.env,
-          AGENT_ID: agent,
-          ASK_DEPTH: String(currentDepth + 1),
-          ASK_CALLER_CHAIN: newCallerChain,
-        },
-        permissionMode: "bypassPermissions",
-      });
-
       try {
-        await session.send(prompt);
-        let response = "";
+        const header = buildDispatchContext({
+          timestamp: new Date().toISOString(),
+          agent_id: agent,
+          trigger: "ask_agent",
+          source: `ask_agent:${callerAgent}`,
+          sender: callerAgent,
+          message_preview: question.slice(0, 200),
+        });
 
-        // Timeout promise for the stream
+        const prompt =
+          header +
+          `You are being asked a question by ${callerAgent}. Please respond directly and concisely.\n\nQuestion: ${question}`;
+
+        const proc = Bun.spawn(["claude", "-r", sessionId, prompt, "-p"], {
+          cwd: PROJECT_ROOT,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...process.env,
+            AGENT_ID: agent,
+            ASK_DEPTH: String(currentDepth + 1),
+            ASK_CALLER_CHAIN: newCallerChain,
+          },
+        });
+
+        // Wait for completion with timeout
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error("Timeout")), ASK_TIMEOUT_MS);
         });
 
-        // Stream response with timeout
-        await Promise.race([
-          (async () => {
-            for await (const msg of session.stream()) {
-              const text = extractTextContent(msg);
-              if (text) {
-                response += text;
-              }
-            }
-          })(),
-          timeoutPromise,
-        ]);
+        const exitCode = await Promise.race([proc.exited, timeoutPromise]);
+
+        if (exitCode !== 0) {
+          return {
+            success: false,
+            error: `Agent ${agent} session exited with code ${exitCode}`,
+          };
+        }
+
+        // Capture response
+        const response = await new Response(proc.stdout).text();
 
         // Broadcast completion to dashboard
         fetch(`http://localhost:${webPort}/api/broadcast`, {
@@ -634,9 +627,7 @@ export async function handleToolCall(
               timestamp: new Date().toISOString(),
             },
           }),
-        }).catch(() => {
-          // Ignore errors - server may not be running
-        });
+        }).catch(() => {});
 
         return {
           success: true,
@@ -659,8 +650,6 @@ export async function handleToolCall(
           success: false,
           error: `Failed to invoke ${agent}: ${message}`,
         };
-      } finally {
-        session.close();
       }
     }
 

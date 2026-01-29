@@ -294,7 +294,7 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
             addSystemMessage(
               "**Starting standup session...** Each agent will respond in sequence. Watch the channel for updates."
             );
-            const result = await startStandup();
+            const result = await startStandup(target);
             if (result.success) {
               addSystemMessage(
                 `**Standup initiated.** Session ID: \`${result.session_id}\`\n\nAgents will post their updates to the channel: Alice, then Bob, then Charlie.`
@@ -320,7 +320,7 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
         return { command, success: false, message: errorMsg };
       }
     },
-    []
+    [target]
   );
 
   // Refresh when we get a new WebSocket message and auto-scroll if near bottom

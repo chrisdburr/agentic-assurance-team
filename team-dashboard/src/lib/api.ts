@@ -69,9 +69,10 @@ export async function fetchDMMessages(agent: string): Promise<Message[]> {
 
   // Filter to only messages in this specific conversation
   // - Messages FROM user TO agent
-  // - Messages FROM agent TO user
+  // - Messages FROM agent TO user (or to the user's actual username)
+  const AGENT_IDS = ["alice", "bob", "charlie"];
   const userToAgent = toAgent.filter((m) => m.from_agent === "user");
-  const agentToUser = fromAgent.filter((m) => m.to_agent === "user");
+  const agentToUser = fromAgent.filter((m) => !AGENT_IDS.includes(m.to_agent));
 
   // Merge and sort by timestamp
   const all = [...userToAgent, ...agentToUser];
@@ -138,6 +139,23 @@ export async function triggerAgent(
   return data;
 }
 
+// Refresh an agent's session (delete old, create new)
+export async function refreshAgentSession(agent: string): Promise<{
+  success: boolean;
+  error?: string;
+  oldSessionId?: string;
+  newSessionId?: string;
+}> {
+  const res = await fetch(`${API_BASE}/dispatcher/refresh/${agent}`, {
+    method: "POST",
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to refresh agent session");
+  }
+  return data;
+}
+
 // Fetch team status
 export async function fetchTeamStatus(): Promise<{
   team: Array<{
@@ -153,7 +171,7 @@ export async function fetchTeamStatus(): Promise<{
 }
 
 // Start a standup session
-export async function startStandup(): Promise<{
+export async function startStandup(channel?: string): Promise<{
   success: boolean;
   session_id?: string;
   summary?: string;
@@ -161,6 +179,8 @@ export async function startStandup(): Promise<{
 }> {
   const res = await fetch(`${API_BASE}/standup/start`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel }),
   });
 
   // Handle non-JSON responses gracefully
