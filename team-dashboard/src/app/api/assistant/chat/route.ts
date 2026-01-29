@@ -1,5 +1,9 @@
 import { auth } from "@/auth";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  unstable_v2_createSession,
+  unstable_v2_resumeSession,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant for Team Chat, a collaborative communication app for AI agent teams. You help users understand the app's features and answer their questions.
 
@@ -67,61 +71,67 @@ export async function POST(request: Request) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        try {
-          let newSessionId: string | undefined;
+        // Create or resume session using V2 API
+        const session = sessionId
+          ? unstable_v2_resumeSession(sessionId, {
+              model: "claude-sonnet-4-5-20250929",
+              allowedTools: [],
+            })
+          : unstable_v2_createSession({
+              model: "claude-sonnet-4-5-20250929",
+              allowedTools: [],
+            });
 
-          // Build the prompt with conversation context
-          const prompt = sessionId
-            ? message // If resuming, just send the new message
+        try {
+          // For new sessions, prepend system prompt to first message
+          const messageToSend = sessionId
+            ? message
             : `${SYSTEM_PROMPT}\n\nUser question: ${message}`;
 
-          // Use the Agent SDK query function
-          for await (const event of query({
-            prompt: sessionId ? message : prompt,
-            options: {
-              // Resume from existing session if we have one
-              ...(sessionId && { resume: sessionId }),
-              // No tools needed for a simple Q&A assistant
-              allowedTools: [],
-              // System prompt only on first message
-              ...(!sessionId && { systemPrompt: SYSTEM_PROMPT }),
-            },
-          })) {
-            // Handle different event types based on the SDK's message structure
-            const ev = event as Record<string, unknown>;
+          // Send message to the session
+          await session.send(messageToSend);
 
-            if (ev.type === "system" && ev.subtype === "init") {
-              // Capture the session ID for future messages
-              newSessionId = ev.session_id as string;
+          // Stream responses
+          let sentSessionId = false;
+          for await (const msg of session.stream()) {
+            const event = msg as SDKMessage;
+
+            // Send session ID on first message (available on all messages)
+            if (!sentSessionId && "session_id" in event) {
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({ sessionId: newSessionId })}\n\n`,
+                  `data: ${JSON.stringify({ sessionId: event.session_id })}\n\n`,
                 ),
               );
-            } else if (ev.type === "assistant" && Array.isArray(ev.content)) {
-              // Stream text content from assistant messages
-              for (const block of ev.content) {
-                if (
-                  typeof block === "object" &&
-                  block !== null &&
-                  "type" in block &&
-                  block.type === "text" &&
-                  "text" in block
-                ) {
-                  controller.enqueue(
-                    encoder.encode(
-                      `data: ${JSON.stringify({ text: block.text })}\n\n`,
-                    ),
-                  );
+              sentSessionId = true;
+            }
+
+            // Stream text content from assistant messages
+            if (event.type === "assistant" && "message" in event) {
+              const content = event.message?.content;
+              if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (block.type === "text" && "text" in block) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify({ text: block.text })}\n\n`,
+                      ),
+                    );
+                  }
                 }
               }
-            } else if ("result" in ev && typeof ev.result === "string") {
-              // Final result
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ text: ev.result })}\n\n`,
-                ),
-              );
+            }
+
+            // Handle result messages
+            if (event.type === "result" && "result" in event) {
+              const result = (event as { result?: string }).result;
+              if (typeof result === "string" && result) {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ text: result })}\n\n`,
+                  ),
+                );
+              }
             }
           }
 
@@ -137,6 +147,9 @@ export async function POST(request: Request) {
             ),
           );
           controller.close();
+        } finally {
+          // Always close the session
+          session.close();
         }
       },
     });
