@@ -8,6 +8,7 @@
     "mcp": "bun run --env-file=../.env src/index.ts --mcp"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.23",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "hono": "^4.0.0",
     "nanoid": "^5.0.0"

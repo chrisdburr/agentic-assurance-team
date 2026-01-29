@@ -1,15 +1,20 @@
 /**
  * Agent Dispatcher Module
  *
- * Watches team.db for unread messages and triggers agent sessions via Claude Code CLI.
+ * Watches team.db for unread messages and triggers agent sessions via SDK V2.
  *
- * Flow: Unread messages -> Poll every 5s -> Debounce (60s cooldown) -> Spawn claude CLI
+ * Flow: Unread messages -> Poll every 5s -> Debounce (60s cooldown) -> SDK session
  * Only triggers if there are NEW messages since last trigger (prevents re-processing).
  */
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
+import {
+  unstable_v2_resumeSession,
+  type SDKSession,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { getOrCreateSession, getUnreadMessages, postStandup } from "./db.js";
 import { logger } from "./logger.js";
 
@@ -52,7 +57,7 @@ interface StandupQueue {
 interface AgentState {
   lastTriggerTime: number;
   lastSeenMessageTime: string; // ISO timestamp of newest message when last triggered
-  activeProcess: ReturnType<typeof Bun.spawn> | null;
+  activeSession: SDKSession | null;
   triggerCount: number;
   lastExitCode: number | null;
   lastActiveStart: number | null;
@@ -63,7 +68,7 @@ const agentState: Record<AgentId, AgentState> = {
   alice: {
     lastTriggerTime: 0,
     lastSeenMessageTime: "",
-    activeProcess: null,
+    activeSession: null,
     triggerCount: 0,
     lastExitCode: null,
     lastActiveStart: null,
@@ -71,7 +76,7 @@ const agentState: Record<AgentId, AgentState> = {
   bob: {
     lastTriggerTime: 0,
     lastSeenMessageTime: "",
-    activeProcess: null,
+    activeSession: null,
     triggerCount: 0,
     lastExitCode: null,
     lastActiveStart: null,
@@ -79,7 +84,7 @@ const agentState: Record<AgentId, AgentState> = {
   charlie: {
     lastTriggerTime: 0,
     lastSeenMessageTime: "",
-    activeProcess: null,
+    activeSession: null,
     triggerCount: 0,
     lastExitCode: null,
     lastActiveStart: null,
@@ -132,8 +137,8 @@ function canTrigger(agent: AgentId): boolean {
     return false;
   }
 
-  // Check if already has an active process
-  if (state.activeProcess !== null) {
+  // Check if already has an active session
+  if (state.activeSession !== null) {
     return false;
   }
 
@@ -144,7 +149,7 @@ export type HealthStatus = "green" | "yellow" | "red";
 
 /**
  * Get health status for an agent
- * - green: No active process, last exit was 0 or never triggered
+ * - green: No active session, last exit was 0 or never triggered
  * - yellow: In cooldown period, or active but < 2 minutes
  * - red: Active > 2 minutes (stuck), or last exit non-zero
  */
@@ -153,8 +158,8 @@ export function getAgentHealth(agent: AgentId): HealthStatus {
   const now = Date.now();
   const TWO_MINUTES = 2 * 60 * 1000;
 
-  // If process is active
-  if (state.activeProcess !== null && state.lastActiveStart !== null) {
+  // If session is active
+  if (state.activeSession !== null && state.lastActiveStart !== null) {
     const activeTime = now - state.lastActiveStart;
     if (activeTime > TWO_MINUTES) {
       return "red"; // Stuck - active for more than 2 minutes
@@ -177,7 +182,93 @@ export function getAgentHealth(agent: AgentId): HealthStatus {
 }
 
 /**
- * Trigger an agent session via Claude CLI
+ * Default model for agent sessions
+ */
+const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+
+/**
+ * Extract text content from SDK message for streaming
+ */
+function extractTextContent(msg: SDKMessage): string | null {
+  if (msg.type === "assistant" && msg.message?.content) {
+    const textBlocks = msg.message.content.filter(
+      (block): block is { type: "text"; text: string } => block.type === "text"
+    );
+    if (textBlocks.length > 0) {
+      return textBlocks.map((b) => b.text).join("");
+    }
+  }
+  return null;
+}
+
+/**
+ * Run an agent session using SDK V2
+ * Handles session lifecycle, streaming, and broadcasts
+ */
+async function runAgentSession(
+  agent: AgentId,
+  sessionId: string,
+  prompt: string,
+  context?: { channel?: string; reason?: string; standupSessionId?: string }
+): Promise<void> {
+  const state = agentState[agent];
+
+  const session = unstable_v2_resumeSession(sessionId, {
+    model: DEFAULT_MODEL,
+    allowedTools: [],
+    env: {
+      ...process.env,
+      AGENT_ID: agent,
+    },
+    permissionMode: "bypassPermissions",
+  });
+
+  state.activeSession = session;
+
+  try {
+    await session.send(prompt);
+
+    for await (const msg of session.stream()) {
+      // Log all messages for debugging
+      logger.debug(agent, `SDK message: ${msg.type}`);
+
+      // Broadcast streaming content to WebSocket
+      const textContent = extractTextContent(msg);
+      if (textContent && broadcast) {
+        broadcast("agent_stream", {
+          agent,
+          sessionId,
+          content: textContent,
+          channel: context?.channel,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Handle result message for exit code
+      if (msg.type === "result") {
+        state.lastExitCode = msg.subtype === "success" ? 0 : 1;
+      }
+    }
+
+    logger.info("Dispatcher", `${agent} session completed`, {
+      sessionId,
+      channel: context?.channel,
+    });
+  } catch (error) {
+    logger.error("Dispatcher", `${agent} session error`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    state.lastExitCode = 1;
+    throw error;
+  } finally {
+    session.close();
+    state.activeSession = null;
+    state.lastActiveStart = null;
+  }
+}
+
+/**
+ * Trigger an agent session via SDK V2
  */
 async function triggerAgent(
   agent: AgentId,
@@ -205,90 +296,26 @@ async function triggerAgent(
     });
   }
 
+  const prompt =
+    "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" +
+    agent +
+    ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.";
+
   try {
-    const proc = Bun.spawn(
-      [
-        "claude",
-        "-r",
+    await runAgentSession(agent, sessionId, prompt);
+
+    if (broadcast) {
+      broadcast("agent_session_ended", {
+        agent,
         sessionId,
-        "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" +
-          agent +
-          ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.",
-        "-p",
-      ],
-      {
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          AGENT_ID: agent,
-        },
-      }
-    );
-
-    state.activeProcess = proc;
-
-    // Handle process completion
-    proc.exited.then((exitCode) => {
-      state.activeProcess = null;
-      state.lastExitCode = exitCode;
-      state.lastActiveStart = null;
-
-      logger.info("Dispatcher", `${agent} session ended`, { exitCode });
-
-      if (broadcast) {
-        broadcast("agent_session_ended", {
-          agent,
-          sessionId,
-          exitCode,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    });
-
-    // Collect stdout for logging
-    if (proc.stdout) {
-      const reader = proc.stdout.getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            const text = new TextDecoder().decode(value);
-            logger.debug(agent, text.trim());
-          }
-        } catch {
-          // Stream closed
-        }
-      })();
-    }
-
-    // Collect stderr for logging
-    if (proc.stderr) {
-      const reader = proc.stderr.getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            const text = new TextDecoder().decode(value);
-            logger.error(agent, text.trim());
-          }
-        } catch {
-          // Stream closed
-        }
-      })();
+        exitCode: state.lastExitCode,
+        timestamp: new Date().toISOString(),
+      });
     }
   } catch (error) {
     logger.error("Dispatcher", `Failed to trigger ${agent}`, {
       error: error instanceof Error ? error.message : String(error),
     });
-    state.activeProcess = null;
 
     if (broadcast) {
       broadcast("agent_trigger_failed", {
@@ -333,13 +360,13 @@ async function checkAndTrigger(): Promise<void> {
           0,
           COOLDOWN - (Date.now() - state.lastTriggerTime)
         );
-        if (remaining > 0 && state.activeProcess === null) {
+        if (remaining > 0 && state.activeSession === null) {
           logger.debug(
             "Dispatcher",
             `${agent} has ${count} NEW unread but in cooldown`,
             { remainingSeconds: Math.ceil(remaining / 1000) }
           );
-        } else if (state.activeProcess !== null) {
+        } else if (state.activeSession !== null) {
           logger.debug(
             "Dispatcher",
             `${agent} has ${count} NEW unread but session is active`
@@ -461,7 +488,7 @@ export function getDispatcherStatus(): {
         ? new Date(state.lastTriggerTime).toISOString()
         : null,
       lastSeenMessage: state.lastSeenMessageTime || null,
-      active: state.activeProcess !== null,
+      active: state.activeSession !== null,
       triggerCount: state.triggerCount,
       health: getAgentHealth(agent),
       lastExitCode: state.lastExitCode,
@@ -497,7 +524,7 @@ export async function manualTrigger(
   const agentId = agent as AgentId;
   const state = agentState[agentId];
 
-  if (state.activeProcess !== null) {
+  if (state.activeSession !== null) {
     return { success: false, error: `${agent} already has an active session` };
   }
 
@@ -526,7 +553,7 @@ export async function triggerAgentForChannel(
   const state = agentState[agentId];
 
   // Check if agent has an active session (skip if busy)
-  if (state.activeProcess !== null) {
+  if (state.activeSession !== null) {
     logger.debug(
       "Dispatcher",
       `${agent} is busy, skipping channel trigger for #${channel}`
@@ -569,89 +596,26 @@ export async function triggerAgentForChannel(
     });
   }
 
-  try {
-    const proc = Bun.spawn(
-      [
-        "claude",
-        "--session-id",
-        sessionId,
-        `You were @mentioned in the #${channel} channel. Do this:
+  const prompt = `You were @mentioned in the #${channel} channel. Do this:
 1. Call channel_read with channel="${channel}" and unread_only=true to see recent messages
 2. Read and understand the context of the conversation
 3. Call channel_write with channel="${channel}" and your response to participate in the discussion
-Remember: Use channel_write to respond in the channel, NOT message_send (that's for DMs).`,
-        "-p",
-      ],
-      {
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          AGENT_ID: agent,
-        },
-      }
-    );
+Remember: Use channel_write to respond in the channel, NOT message_send (that's for DMs).`;
 
-    state.activeProcess = proc;
-
-    // Handle process completion
-    proc.exited.then((exitCode) => {
-      state.activeProcess = null;
-      state.lastExitCode = exitCode;
-      state.lastActiveStart = null;
-
-      logger.info("Dispatcher", `${agent} channel session ended`, {
-        exitCode,
-      });
-
-      if (broadcast) {
-        broadcast("agent_session_ended", {
-          agent,
-          sessionId,
-          channel,
-          exitCode,
-          timestamp: new Date().toISOString(),
-        });
-      }
+  try {
+    await runAgentSession(agentId, sessionId, prompt, {
+      channel,
+      reason: "channel_mention",
     });
 
-    // Collect stdout for logging
-    if (proc.stdout) {
-      const reader = proc.stdout.getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            const text = new TextDecoder().decode(value);
-            logger.debug(agent, text.trim());
-          }
-        } catch {
-          // Stream closed
-        }
-      })();
-    }
-
-    // Collect stderr for logging
-    if (proc.stderr) {
-      const reader = proc.stderr.getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            const text = new TextDecoder().decode(value);
-            logger.error(agent, text.trim());
-          }
-        } catch {
-          // Stream closed
-        }
-      })();
+    if (broadcast) {
+      broadcast("agent_session_ended", {
+        agent,
+        sessionId,
+        channel,
+        exitCode: state.lastExitCode,
+        timestamp: new Date().toISOString(),
+      });
     }
 
     return { success: true };
@@ -659,8 +623,6 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
     logger.error("Dispatcher", `Failed to trigger ${agent} for channel`, {
       error: error instanceof Error ? error.message : String(error),
     });
-    state.activeProcess = null;
-    state.lastActiveStart = null;
 
     if (broadcast) {
       broadcast("agent_trigger_failed", {
@@ -791,93 +753,29 @@ async function triggerAgentForStandup(
     });
   }
 
+  const prompt = `A standup has been requested in #${channel} for ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`;
+
   try {
-    const proc = Bun.spawn(
-      [
-        "claude",
-        "--session-id",
-        sessionId,
-        `A standup has been requested in #${channel} for ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`,
-        "-p",
-      ],
-      {
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          AGENT_ID: agent,
-        },
-      }
-    );
-
-    state.activeProcess = proc;
-
-    // Handle process completion
-    proc.exited.then((exitCode) => {
-      state.activeProcess = null;
-      state.lastExitCode = exitCode;
-      state.lastActiveStart = null;
-
-      logger.info("Dispatcher", `${agent} standup session ended`, {
-        exitCode,
-      });
-
-      if (broadcast) {
-        broadcast("agent_session_ended", {
-          agent,
-          sessionId,
-          channel,
-          reason: "standup",
-          exitCode,
-          timestamp: new Date().toISOString(),
-        });
-      }
+    await runAgentSession(agent, sessionId, prompt, {
+      channel,
+      reason: "standup",
+      standupSessionId,
     });
 
-    // Collect stdout for logging
-    if (proc.stdout) {
-      const reader = proc.stdout.getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            const text = new TextDecoder().decode(value);
-            logger.debug(agent, text.trim());
-          }
-        } catch {
-          // Stream closed
-        }
-      })();
-    }
-
-    // Collect stderr for logging
-    if (proc.stderr) {
-      const reader = proc.stderr.getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            const text = new TextDecoder().decode(value);
-            logger.error(agent, text.trim());
-          }
-        } catch {
-          // Stream closed
-        }
-      })();
+    if (broadcast) {
+      broadcast("agent_session_ended", {
+        agent,
+        sessionId,
+        channel,
+        reason: "standup",
+        exitCode: state.lastExitCode,
+        timestamp: new Date().toISOString(),
+      });
     }
   } catch (error) {
     logger.error("Dispatcher", `Failed to trigger ${agent} for standup`, {
       error: error instanceof Error ? error.message : String(error),
     });
-    state.activeProcess = null;
-    state.lastActiveStart = null;
 
     if (broadcast) {
       broadcast("agent_trigger_failed", {
