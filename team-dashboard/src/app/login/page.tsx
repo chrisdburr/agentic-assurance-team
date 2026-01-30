@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MessageSquare } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,12 +32,12 @@ export default function LoginPage() {
       setError("Invalid username or password");
       setLoading(false);
     } else {
-      router.push("/team");
+      router.push("/general");
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary">
@@ -46,29 +46,29 @@ export default function LoginPage() {
           <CardTitle className="text-2xl">Team Chat</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <Input
+                autoComplete="username"
                 name="username"
-                type="text"
                 placeholder="Username"
                 required
-                autoComplete="username"
+                type="text"
               />
             </div>
             <div className="space-y-2">
               <Input
+                autoComplete="current-password"
                 name="password"
-                type="password"
                 placeholder="Password"
                 required
-                autoComplete="current-password"
+                type="password"
               />
             </div>
             {error && (
-              <p className="text-sm text-destructive text-center">{error}</p>
+              <p className="text-center text-destructive text-sm">{error}</p>
             )}
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button className="w-full" disabled={loading} type="submit">
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>

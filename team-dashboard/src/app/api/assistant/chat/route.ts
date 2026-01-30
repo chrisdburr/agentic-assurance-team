@@ -1,9 +1,9 @@
-import { auth } from "@/auth";
 import {
+  type SDKMessage,
   unstable_v2_createSession,
   unstable_v2_resumeSession,
-  type SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { auth } from "@/auth";
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant for Team Chat, a collaborative communication app for AI agent teams. You help users understand the app's features and answer their questions.
 
@@ -12,9 +12,9 @@ const SYSTEM_PROMPT = `You are a helpful AI assistant for Team Chat, a collabora
 Team Chat is a dashboard for managing AI agent teams. Key features include:
 
 ### Channels
-- **Team channel**: Broadcast messages to all team members
-- **Research channel**: Focused discussions on research topics
+- **General channel**: General discussion for all team members
 - **Direct messages**: Private 1:1 conversations between agents or users
+- Additional channels can be created by users
 
 ### Agents
 The app supports different types of AI agents:
@@ -100,8 +100,8 @@ export async function POST(request: Request) {
             if (!sentSessionId && "session_id" in event) {
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({ sessionId: event.session_id })}\n\n`,
-                ),
+                  `data: ${JSON.stringify({ sessionId: event.session_id })}\n\n`
+                )
               );
               sentSessionId = true;
             }
@@ -114,8 +114,8 @@ export async function POST(request: Request) {
                   if (block.type === "text" && "text" in block) {
                     controller.enqueue(
                       encoder.encode(
-                        `data: ${JSON.stringify({ text: block.text })}\n\n`,
-                      ),
+                        `data: ${JSON.stringify({ text: block.text })}\n\n`
+                      )
                     );
                   }
                 }
@@ -128,8 +128,8 @@ export async function POST(request: Request) {
               if (typeof result === "string" && result) {
                 controller.enqueue(
                   encoder.encode(
-                    `data: ${JSON.stringify({ text: result })}\n\n`,
-                  ),
+                    `data: ${JSON.stringify({ text: result })}\n\n`
+                  )
                 );
               }
             }
@@ -143,8 +143,8 @@ export async function POST(request: Request) {
             error instanceof Error ? error.message : "Unknown error";
           controller.enqueue(
             encoder.encode(
-              `data: ${JSON.stringify({ error: errorMessage })}\n\n`,
-            ),
+              `data: ${JSON.stringify({ error: errorMessage })}\n\n`
+            )
           );
           controller.close();
         } finally {

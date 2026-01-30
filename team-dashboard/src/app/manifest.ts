@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Team Chat",
     short_name: "TeamChat",
     description: "AI Team Communication Dashboard",
-    start_url: "/team",
+    start_url: "/general",
     display: "standalone",
     background_color: "#1f2937",
     theme_color: "#1f2937",

@@ -70,7 +70,7 @@ You have access to team MCP tools:
 - `message_list(unread_only, thread_id)` - Check your messages
 
 ### Channel Communication
-- `channel_read(channel, limit, unread_only)` - Read recent messages from #team or #research channel
+- `channel_read(channel, limit, unread_only)` - Read recent messages from a channel
 - `channel_write(channel, content)` - Post a message to a channel
 - `channel_list()` - List available channels
 

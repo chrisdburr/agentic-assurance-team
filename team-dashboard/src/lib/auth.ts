@@ -193,7 +193,7 @@ export const authConfig: NextAuthConfig = {
 
       if (isOnLogin) {
         if (isLoggedIn) {
-          return Response.redirect(new URL("/team", nextUrl));
+          return Response.redirect(new URL("/general", nextUrl));
         }
         return true;
       }

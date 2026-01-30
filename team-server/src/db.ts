@@ -283,6 +283,7 @@ const selectChannelsForUser = db.prepare(
   `SELECT DISTINCT c.* FROM channels c
    LEFT JOIN channel_members cm ON c.id = cm.channel_id
    WHERE c.owner_id = $userId
+   OR c.owner_id = 'system'
    OR (cm.member_type = 'user' AND cm.member_id = $userId)
    ORDER BY c.created_at`
 );
@@ -853,33 +854,22 @@ function seedDefaultChannels(): void {
     return; // Channels already exist
   }
 
-  console.log("[DB] Seeding default channels: team, research, test");
+  console.log("[DB] Seeding default channel: general");
 
-  // Create default channels with "system" owner
   const projectPath = PROJECT_ROOT;
 
   try {
     createChannel(
-      "team",
-      "team",
+      "general",
+      "General",
       projectPath,
       "system",
-      "Team broadcast channel"
+      "General discussion"
     );
-    createChannel(
-      "research",
-      "research",
-      projectPath,
-      "system",
-      "Research discussion"
-    );
-    createChannel("test", "test", projectPath, "system", "Testing channel");
 
-    // Add all agents to default channels
+    // Add all agents to the default channel
     for (const agent of getDispatchableAgentIds()) {
-      addChannelMember("team", "agent", agent, "member");
-      addChannelMember("research", "agent", agent, "member");
-      addChannelMember("test", "agent", agent, "member");
+      addChannelMember("general", "agent", agent, "member");
     }
   } catch (err) {
     console.error("[DB] Error seeding default channels:", err);

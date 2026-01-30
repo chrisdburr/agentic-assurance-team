@@ -259,13 +259,13 @@ export const toolDefinitions = [
   {
     name: "channel_read",
     description:
-      "Read recent messages from a team channel (team, research). Use this to see channel discussions and respond to @mentions.",
+      "Read recent messages from a team channel. Use this to see channel discussions and respond to @mentions.",
     inputSchema: {
       type: "object" as const,
       properties: {
         channel: {
           type: "string",
-          description: "The channel to read from (e.g., team, research, test)",
+          description: "The channel to read from (e.g., general)",
         },
         limit: {
           type: "number",
@@ -285,13 +285,13 @@ export const toolDefinitions = [
   {
     name: "channel_write",
     description:
-      "Post a message to a team channel (team, research). Use this to respond to channel discussions or @mentions.",
+      "Post a message to a team channel. Use this to respond to channel discussions or @mentions.",
     inputSchema: {
       type: "object" as const,
       properties: {
         channel: {
           type: "string",
-          description: "The channel to post to (e.g., team, research, test)",
+          description: "The channel to post to (e.g., general)",
         },
         content: {
           type: "string",
@@ -747,7 +747,7 @@ export async function handleToolCall(
 
       if (!isValidChannel(channel)) {
         return {
-          error: `Invalid channel: ${channel}. Valid channels: team, research`,
+          error: `Channel not found: ${channel}`,
         };
       }
 
@@ -779,7 +779,7 @@ export async function handleToolCall(
 
       if (!isValidChannel(channel)) {
         return {
-          error: `Invalid channel: ${channel}. Valid channels: team, research`,
+          error: `Channel not found: ${channel}`,
         };
       }
 
