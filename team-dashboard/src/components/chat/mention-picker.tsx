@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { AtSign, Terminal, Users } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 export interface MentionOption {
@@ -13,13 +13,27 @@ export interface MentionOption {
 export const MENTION_OPTIONS: MentionOption[] = [
   { value: "alice", label: "Alice", description: "Philosopher - epistemology" },
   { value: "bob", label: "Bob", description: "Computer scientist - AI/ML" },
-  { value: "charlie", label: "Charlie", description: "Psychologist - HCI/trust" },
+  {
+    value: "charlie",
+    label: "Charlie",
+    description: "Psychologist - HCI/trust",
+  },
   { value: "team", label: "Team", description: "Mention all agents" },
 ];
 
 export const COMMAND_OPTIONS: MentionOption[] = [
   { value: "standup", label: "/standup", description: "Start daily standup" },
   { value: "status", label: "/status", description: "Check team status" },
+  {
+    value: "orchestrate:decompose",
+    label: "/orchestrate:decompose",
+    description: "Decompose task into issues",
+  },
+  {
+    value: "orchestrate:status",
+    label: "/orchestrate:status",
+    description: "Check epic progress",
+  },
   { value: "help", label: "/help", description: "Show available commands" },
 ];
 
@@ -53,7 +67,10 @@ export function MentionPicker({
   // Handle click outside to close
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         onClose();
       }
     };
@@ -64,7 +81,9 @@ export function MentionPicker({
 
   // Scroll selected item into view
   useEffect(() => {
-    const selected = containerRef.current?.querySelector('[data-selected="true"]');
+    const selected = containerRef.current?.querySelector(
+      '[data-selected="true"]'
+    );
     selected?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
@@ -74,43 +93,51 @@ export function MentionPicker({
 
   return (
     <div
+      className="absolute bottom-full left-0 z-50 mb-2 w-72 rounded-lg border bg-popover shadow-md"
       ref={containerRef}
-      className="absolute bottom-full left-0 mb-2 w-72 z-50 rounded-lg border bg-popover shadow-md"
     >
-      <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground border-b">
+      <div className="border-b px-2 py-1.5 font-medium text-muted-foreground text-xs">
         {title}
       </div>
       <div className="max-h-[200px] overflow-y-auto p-1">
         {filteredOptions.map((option, index) => (
           <div
-            key={option.value}
-            data-selected={index === selectedIndex}
-            onClick={() => onSelect(option.value)}
             className={cn(
-              "flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer",
+              "flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5",
               index === selectedIndex
                 ? "bg-accent text-accent-foreground"
                 : "hover:bg-accent/50"
             )}
+            data-selected={index === selectedIndex}
+            key={option.value}
+            onClick={() => onSelect(option.value)}
           >
             {type === "mention" && option.value === "team" ? (
-              <Users className="h-4 w-4 text-muted-foreground shrink-0" />
+              <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
             ) : (
-              <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+              <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
             )}
-            <div className="flex flex-col min-w-0">
-              <span className="font-medium text-sm truncate">{option.label}</span>
-              <span className="text-xs text-muted-foreground truncate">
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate font-medium text-sm">
+                {option.label}
+              </span>
+              <span className="truncate text-muted-foreground text-xs">
                 {option.description}
               </span>
             </div>
           </div>
         ))}
       </div>
-      <div className="px-2 py-1.5 text-xs text-muted-foreground border-t flex gap-3">
-        <span><kbd className="px-1 bg-muted rounded">↑↓</kbd> navigate</span>
-        <span><kbd className="px-1 bg-muted rounded">↵</kbd> select</span>
-        <span><kbd className="px-1 bg-muted rounded">esc</kbd> close</span>
+      <div className="flex gap-3 border-t px-2 py-1.5 text-muted-foreground text-xs">
+        <span>
+          <kbd className="rounded bg-muted px-1">↑↓</kbd> navigate
+        </span>
+        <span>
+          <kbd className="rounded bg-muted px-1">↵</kbd> select
+        </span>
+        <span>
+          <kbd className="rounded bg-muted px-1">esc</kbd> close
+        </span>
       </div>
     </div>
   );

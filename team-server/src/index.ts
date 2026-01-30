@@ -67,6 +67,7 @@ import {
   refreshAgentSession,
   startStandupQueue,
   triggerAgentForChannel,
+  triggerOrchestrator,
 } from "./dispatcher.js";
 import { logger } from "./logger.js";
 import {
@@ -708,6 +709,72 @@ function runHttpServer() {
       pending_agents: queue.pendingAgents,
       started_at: queue.startedAt,
     });
+  });
+
+  // Orchestrate endpoints
+  app.post("/api/orchestrate/decompose", async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const { task, channel } = body as { task?: string; channel?: string };
+
+      if (!task || typeof task !== "string" || !task.trim()) {
+        return c.json(
+          { success: false, error: "Missing or invalid 'task' field" },
+          400
+        );
+      }
+
+      const result = triggerOrchestrator("decompose", {
+        task: task.trim(),
+        channel: channel || "team",
+      });
+
+      if (!result.success) {
+        return c.json(result, 400);
+      }
+
+      return c.json({
+        ...result,
+        channel: channel || "team",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ success: false, error: message }, 500);
+    }
+  });
+
+  app.post("/api/orchestrate/status", async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const { epic_id, channel } = body as {
+        epic_id?: string;
+        channel?: string;
+      };
+
+      if (!epic_id || typeof epic_id !== "string" || !epic_id.trim()) {
+        return c.json(
+          { success: false, error: "Missing or invalid 'epic_id' field" },
+          400
+        );
+      }
+
+      const result = triggerOrchestrator("status", {
+        epic_id: epic_id.trim(),
+        channel: channel || "team",
+      });
+
+      if (!result.success) {
+        return c.json(result, 400);
+      }
+
+      return c.json({
+        ...result,
+        channel: channel || "team",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ success: false, error: message }, 500);
+    }
   });
 
   // Cross-agent events feed (for monitoring dashboard)

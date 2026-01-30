@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  checkOrchestrationStatus,
   fetchChannelMessages,
   fetchDMMessages,
   fetchTeamStatus,
   sendChannelMessage,
   sendMessage,
+  startDecomposition,
   startStandup,
 } from "@/lib/api";
 import { filterRecentMessages } from "@/lib/message-utils";
@@ -247,7 +249,7 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
 
   // Handle slash commands
   const handleCommand = useCallback(
-    async (command: SlashCommand): Promise<CommandResult> => {
+    async (command: SlashCommand, args?: string): Promise<CommandResult> => {
       const addSystemMessage = (content: string) => {
         const sysMsg: SystemMessage = {
           id: `sys-${Date.now()}`,
@@ -265,7 +267,9 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
               "**Available Commands:**\n" +
                 "- `/help` - Show this help message\n" +
                 "- `/status` - Show team member status\n" +
-                "- `/standup` - Start a standup session (Alice → Bob → Charlie)"
+                "- `/standup` - Start a standup session (Alice → Bob → Charlie)\n" +
+                "- `/orchestrate:decompose <task>` - Decompose a task into issues\n" +
+                "- `/orchestrate:status <epic-id>` - Check progress on an epic"
             );
             return { command, success: true, message: "Help displayed" };
           }
@@ -305,6 +309,68 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
               );
             }
             return { command, success: true, message: "Standup initiated" };
+          }
+
+          case "orchestrate:decompose": {
+            if (!args) {
+              addSystemMessage(
+                "**Usage:** `/orchestrate:decompose <task description>`\n\nExample: `/orchestrate:decompose Build a calibration pipeline for sensor data`"
+              );
+              return {
+                command,
+                success: false,
+                message: "Missing task argument",
+              };
+            }
+            addSystemMessage(
+              "**Starting task decomposition...** The orchestrator will break down your task and post results to the channel."
+            );
+            const result = await startDecomposition(args, target);
+            if (result.success) {
+              addSystemMessage(
+                `**Decomposition started.** Session ID: \`${result.session_id}\`\n\nThe orchestrator will create an epic with subtasks and post updates to #${result.channel || target}.`
+              );
+            } else {
+              addSystemMessage(
+                `**Decomposition failed:** ${result.error || "Unknown error"}`
+              );
+            }
+            return {
+              command,
+              success: true,
+              message: "Decomposition initiated",
+            };
+          }
+
+          case "orchestrate:status": {
+            if (!args) {
+              addSystemMessage(
+                "**Usage:** `/orchestrate:status <epic-id>`\n\nExample: `/orchestrate:status team-abc123`"
+              );
+              return {
+                command,
+                success: false,
+                message: "Missing epic ID argument",
+              };
+            }
+            addSystemMessage(
+              `**Checking epic progress...** The orchestrator will review the status of \`${args}\` and post results to the channel.`
+            );
+            const result = await checkOrchestrationStatus(args, target);
+            if (result.success) {
+              addSystemMessage(
+                `**Status check started.** Session ID: \`${result.session_id}\`\n\nThe orchestrator will post a progress report to #${result.channel || target}.`
+              );
+            } else {
+              addSystemMessage(
+                `**Status check failed:** ${result.error || "Unknown error"}`
+              );
+            }
+            return {
+              command,
+              success: true,
+              message: "Status check initiated",
+            };
           }
 
           default:

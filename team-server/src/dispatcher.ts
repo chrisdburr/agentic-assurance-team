@@ -22,7 +22,7 @@ import { logger } from "./logger.js";
 export interface DispatchContext {
   timestamp: string;
   agent_id: string;
-  trigger: "dm" | "mention" | "standup" | "ask_agent";
+  trigger: "dm" | "mention" | "standup" | "ask_agent" | "orchestrate";
   source: string;
   sender: string | null;
   senders?: string[];
@@ -961,4 +961,141 @@ export function onStandupChannelMessage(
  */
 export function getStandupQueueStatus(): StandupQueue | null {
   return activeStandupQueue ? { ...activeStandupQueue } : null;
+}
+
+// Orchestrator concurrency guard
+let activeOrchestratorProcess: {
+  sessionId: string;
+  command: string;
+  startedAt: string;
+} | null = null;
+
+/**
+ * Trigger an orchestrator session from the dashboard.
+ * Spawns a fresh Claude CLI session with the appropriate skill prompt.
+ */
+export function triggerOrchestrator(
+  command: "decompose" | "status",
+  params: { task?: string; epic_id?: string; channel: string }
+): { success: boolean; session_id?: string; error?: string } {
+  if (activeOrchestratorProcess) {
+    return {
+      success: false,
+      error: `Orchestrator is already running (${activeOrchestratorProcess.command}, session: ${activeOrchestratorProcess.sessionId})`,
+    };
+  }
+
+  const sessionId = `orchestrate_${command}_${nanoid(10)}`;
+
+  let prompt: string;
+  if (command === "decompose") {
+    const header = buildDispatchContext({
+      timestamp: new Date().toISOString(),
+      agent_id: "orchestrator",
+      trigger: "orchestrate",
+      source: "dashboard:orchestrate:decompose",
+      sender: "user",
+      channel: params.channel,
+    });
+
+    prompt =
+      header +
+      `The user has requested task decomposition from the dashboard. The task is:\n\n${params.task}\n\n` +
+      "Run the /orchestrate:decompose skill with this task. " +
+      "IMPORTANT: The user has already approved this from the dashboard, so skip the approval gate (do NOT use AskUserQuestion). " +
+      "Proceed directly with creating the epic and issues. " +
+      `Post all output and progress updates to the #${params.channel} channel using channel_write.`;
+  } else {
+    const header = buildDispatchContext({
+      timestamp: new Date().toISOString(),
+      agent_id: "orchestrator",
+      trigger: "orchestrate",
+      source: "dashboard:orchestrate:status",
+      sender: "user",
+      channel: params.channel,
+    });
+
+    prompt =
+      header +
+      `The user has requested an epic status check from the dashboard. The epic ID is: ${params.epic_id}\n\n` +
+      "Run the /orchestrate:status skill for this epic. " +
+      `Post all output and progress updates to the #${params.channel} channel using channel_write.`;
+  }
+
+  activeOrchestratorProcess = {
+    sessionId,
+    command,
+    startedAt: new Date().toISOString(),
+  };
+
+  if (broadcast) {
+    broadcast("orchestrator_started", {
+      sessionId,
+      command,
+      channel: params.channel,
+      task: params.task,
+      epic_id: params.epic_id,
+      timestamp: activeOrchestratorProcess.startedAt,
+    });
+  }
+
+  try {
+    spawnClaudeSession("orchestrator", sessionId, prompt, (exitCode) => {
+      const ended = activeOrchestratorProcess;
+      activeOrchestratorProcess = null;
+
+      logger.info("Dispatcher", `Orchestrator ${command} session ended`, {
+        sessionId,
+        exitCode,
+      });
+
+      if (broadcast) {
+        if (exitCode === 0) {
+          broadcast("orchestrator_ended", {
+            sessionId,
+            command,
+            channel: params.channel,
+            exitCode,
+            timestamp: new Date().toISOString(),
+            startedAt: ended?.startedAt,
+          });
+        } else {
+          broadcast("orchestrator_failed", {
+            sessionId,
+            command,
+            channel: params.channel,
+            exitCode,
+            timestamp: new Date().toISOString(),
+            startedAt: ended?.startedAt,
+          });
+        }
+      }
+    });
+
+    logger.info("Dispatcher", `Orchestrator ${command} session started`, {
+      sessionId,
+      channel: params.channel,
+    });
+
+    return { success: true, session_id: sessionId };
+  } catch (error) {
+    activeOrchestratorProcess = null;
+
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error("Dispatcher", `Failed to start orchestrator ${command}`, {
+      error: errorMsg,
+    });
+
+    if (broadcast) {
+      broadcast("orchestrator_failed", {
+        sessionId,
+        command,
+        channel: params.channel,
+        error: errorMsg,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return { success: false, error: errorMsg };
+  }
 }

@@ -224,6 +224,64 @@ export async function startStandup(channel?: string): Promise<{
   return data;
 }
 
+// Start a task decomposition via orchestrator
+export async function startDecomposition(
+  task: string,
+  channel?: string
+): Promise<{
+  success: boolean;
+  session_id?: string;
+  channel?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${API_BASE}/orchestrate/decompose`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task, channel }),
+  });
+
+  const contentType = res.headers.get("content-type");
+  if (!contentType?.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(text || "Server returned non-JSON response");
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to start decomposition");
+  }
+  return data;
+}
+
+// Check orchestration status for an epic
+export async function checkOrchestrationStatus(
+  epicId: string,
+  channel?: string
+): Promise<{
+  success: boolean;
+  session_id?: string;
+  channel?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${API_BASE}/orchestrate/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ epic_id: epicId, channel }),
+  });
+
+  const contentType = res.headers.get("content-type");
+  if (!contentType?.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(text || "Server returned non-JSON response");
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to check orchestration status");
+  }
+  return data;
+}
+
 // Change user password
 export async function changePassword(
   userId: string,

@@ -1,13 +1,22 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
 import { Send } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MentionPicker, MENTION_OPTIONS, COMMAND_OPTIONS } from "./mention-picker";
+import {
+  COMMAND_OPTIONS,
+  MENTION_OPTIONS,
+  MentionPicker,
+} from "./mention-picker";
 
 // Supported slash commands
-export type SlashCommand = "standup" | "status" | "help";
+export type SlashCommand =
+  | "standup"
+  | "status"
+  | "help"
+  | "orchestrate:decompose"
+  | "orchestrate:status";
 
 export interface CommandResult {
   command: SlashCommand;
@@ -15,11 +24,16 @@ export interface CommandResult {
   message: string;
 }
 
+interface ParsedCommand {
+  command: SlashCommand;
+  args?: string;
+}
+
 interface MessageInputProps {
   channel?: string;
   agent?: string;
   onSend: (content: string) => Promise<void>;
-  onCommand?: (command: SlashCommand) => Promise<CommandResult>;
+  onCommand?: (command: SlashCommand, args?: string) => Promise<CommandResult>;
 }
 
 interface TriggerState {
@@ -28,17 +42,37 @@ interface TriggerState {
   query: string;
 }
 
-// Parse a slash command from input
-function parseCommand(input: string): SlashCommand | null {
-  const trimmed = input.trim().toLowerCase();
-  if (trimmed === "/standup") return "standup";
-  if (trimmed === "/status") return "status";
-  if (trimmed === "/help") return "help";
-  return null;
+const COMMAND_MAP: Record<string, SlashCommand> = {
+  "/standup": "standup",
+  "/status": "status",
+  "/help": "help",
+  "/orchestrate:decompose": "orchestrate:decompose",
+  "/orchestrate:status": "orchestrate:status",
+};
+
+// Parse a slash command (with optional args) from input
+function parseCommand(input: string): ParsedCommand | null {
+  const trimmed = input.trim();
+  const spaceIndex = trimmed.indexOf(" ");
+  const commandPart = (
+    spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex)
+  ).toLowerCase();
+  const command = COMMAND_MAP[commandPart];
+  if (!command) {
+    return null;
+  }
+  const args =
+    spaceIndex === -1
+      ? undefined
+      : trimmed.slice(spaceIndex + 1).trim() || undefined;
+  return { command, args };
 }
 
 // Detect trigger character and extract query
-function detectTrigger(value: string, cursorPosition: number): TriggerState | null {
+function detectTrigger(
+  value: string,
+  cursorPosition: number
+): TriggerState | null {
   // Look backwards from cursor position to find trigger character
   let i = cursorPosition - 1;
 
@@ -73,7 +107,12 @@ function detectTrigger(value: string, cursorPosition: number): TriggerState | nu
   return null;
 }
 
-export function MessageInput({ channel, agent, onSend, onCommand }: MessageInputProps) {
+export function MessageInput({
+  channel,
+  agent,
+  onSend,
+  onCommand,
+}: MessageInputProps) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +123,8 @@ export function MessageInput({ channel, agent, onSend, onCommand }: MessageInput
   // Get filtered options for keyboard navigation
   const getFilteredOptions = useCallback(() => {
     if (!trigger) return [];
-    const options = trigger.type === "mention" ? MENTION_OPTIONS : COMMAND_OPTIONS;
+    const options =
+      trigger.type === "mention" ? MENTION_OPTIONS : COMMAND_OPTIONS;
     return options.filter(
       (option) =>
         option.value.toLowerCase().includes(trigger.query.toLowerCase()) ||
@@ -105,27 +145,32 @@ export function MessageInput({ channel, agent, onSend, onCommand }: MessageInput
     setTrigger(detectTrigger(value, cursorPosition));
   };
 
-  const handleSelect = useCallback((value: string) => {
-    if (!trigger || !inputRef.current) return;
+  const handleSelect = useCallback(
+    (value: string) => {
+      if (!(trigger && inputRef.current)) return;
 
-    const prefix = trigger.type === "mention" ? "@" : "/";
-    const replacement = `${prefix}${value} `;
-    const before = message.slice(0, trigger.startIndex);
-    const after = message.slice(trigger.startIndex + trigger.query.length + 1);
-    const newMessage = before + replacement + after;
+      const prefix = trigger.type === "mention" ? "@" : "/";
+      const replacement = `${prefix}${value} `;
+      const before = message.slice(0, trigger.startIndex);
+      const after = message.slice(
+        trigger.startIndex + trigger.query.length + 1
+      );
+      const newMessage = before + replacement + after;
 
-    setMessage(newMessage);
-    setTrigger(null);
+      setMessage(newMessage);
+      setTrigger(null);
 
-    // Focus input and set cursor position after the inserted text
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-        const newPosition = before.length + replacement.length;
-        inputRef.current.setSelectionRange(newPosition, newPosition);
-      }
-    }, 0);
-  }, [trigger, message]);
+      // Focus input and set cursor position after the inserted text
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          const newPosition = before.length + replacement.length;
+          inputRef.current.setSelectionRange(newPosition, newPosition);
+        }
+      }, 0);
+    },
+    [trigger, message]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!trigger) return;
@@ -178,10 +223,10 @@ export function MessageInput({ channel, agent, onSend, onCommand }: MessageInput
     setMessage(""); // Clear input immediately for better UX
 
     // Check for slash command
-    const command = parseCommand(content);
-    if (command && onCommand) {
+    const parsed = parseCommand(content);
+    if (parsed && onCommand) {
       try {
-        const result = await onCommand(command);
+        const result = await onCommand(parsed.command, parsed.args);
         if (!result.success) {
           setError(result.message);
         }
@@ -196,7 +241,9 @@ export function MessageInput({ channel, agent, onSend, onCommand }: MessageInput
     // Check for unknown slash command
     if (content.startsWith("/")) {
       const unknownCmd = content.split(/\s/)[0];
-      setError(`Unknown command: ${unknownCmd}. Type /help for available commands.`);
+      setError(
+        `Unknown command: ${unknownCmd}. Type /help for available commands.`
+      );
       setSending(false);
       return;
     }
@@ -222,31 +269,29 @@ export function MessageInput({ channel, agent, onSend, onCommand }: MessageInput
       : "Type a message...";
 
   return (
-    <form onSubmit={handleSubmit} className="border-t px-6 py-4">
-      {error && (
-        <div className="text-sm text-red-500 mb-2">{error}</div>
-      )}
+    <form className="border-t px-6 py-4" onSubmit={handleSubmit}>
+      {error && <div className="mb-2 text-red-500 text-sm">{error}</div>}
       <div className="relative flex gap-2">
         {trigger && (
           <MentionPicker
-            type={trigger.type}
+            onClose={handleClose}
+            onSelect={handleSelect}
             query={trigger.query}
             selectedIndex={selectedIndex}
-            onSelect={handleSelect}
-            onClose={handleClose}
+            type={trigger.type}
           />
         )}
         <Input
-          ref={inputRef}
-          value={message}
+          autoComplete="off"
+          className="flex-1"
+          disabled={sending}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="flex-1"
-          disabled={sending}
-          autoComplete="off"
+          ref={inputRef}
+          value={message}
         />
-        <Button type="submit" size="icon" disabled={sending || !message.trim()}>
+        <Button disabled={sending || !message.trim()} size="icon" type="submit">
           <Send className="h-4 w-4" />
         </Button>
       </div>
