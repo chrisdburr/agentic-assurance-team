@@ -105,10 +105,17 @@ try {
   // Column already exists, ignore error
 }
 
+// Migration: Add metadata column to messages table
+try {
+  db.exec("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT NULL");
+} catch {
+  // Column already exists, ignore error
+}
+
 // Prepared statements
 const insertMessage = db.prepare(
-  `INSERT INTO messages (id, from_agent, to_agent, content, thread_id, timestamp, read_by)
-   VALUES ($id, $from, $to, $content, $threadId, $timestamp, '[]')`
+  `INSERT INTO messages (id, from_agent, to_agent, content, thread_id, timestamp, read_by, metadata)
+   VALUES ($id, $from, $to, $content, $threadId, $timestamp, '[]', $metadata)`
 );
 
 const selectMessagesForAgent = db.prepare(
@@ -304,7 +311,8 @@ export function sendMessage(
   from: string,
   to: string,
   content: string,
-  threadId?: string
+  threadId?: string,
+  metadata?: Record<string, unknown>
 ): string {
   const id = nanoid();
   const timestamp = new Date().toISOString();
@@ -317,6 +325,7 @@ export function sendMessage(
     $content: content,
     $threadId: actualThreadId,
     $timestamp: timestamp,
+    $metadata: metadata ? JSON.stringify(metadata) : null,
   });
 
   return id;
@@ -904,6 +913,7 @@ export interface Message {
   thread_id: string | null;
   timestamp: string;
   read_by: string;
+  metadata: string | null;
 }
 
 export interface Standup {

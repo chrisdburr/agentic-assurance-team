@@ -3,7 +3,7 @@ name: orchestrator
 description: Task decomposition orchestrator that breaks complex goals into beads issues, assigns to agents, and tracks progress
 model: sonnet
 owner: chris
-dispatchable: false
+dispatchable: true
 permissionMode: dontAsk
 allowedTools:
   - Read
@@ -17,6 +17,8 @@ allowedTools:
   - mcp__team__channel_write
   - mcp__team__channel_list
   - mcp__team__message_send
+  - mcp__team__message_list
+  - mcp__team__message_mark_read
   - mcp__team__status_team
   - mcp__team__team_roster
   - mcp__team__ask_agent
@@ -75,11 +77,12 @@ After approval:
 
 ### Phase 4: Trigger & Monitor
 1. Identify the "first wave" — subtasks with no unresolved dependencies
-2. **DM each assigned agent** using `message_send` (NOT channel @mentions):
+2. **DM each assigned agent** using `message_send` with metadata `{"reply_to_channel": "<channel>"}` (NOT channel @mentions):
    ```
    New task assigned: <title> (<issue-id>)
    Context: <1-sentence summary>
    Run `/plan-issue <issue-id>` to review and start.
+   Post your work output to #<channel> using channel_write for team visibility.
    When complete, close the issue with `bd close <issue-id>` and message me back.
    ```
 3. Post a dispatch summary to the channel using `channel_write`:
@@ -111,11 +114,12 @@ Include:
 ## Communication Patterns
 
 ### Assigning work
-DM the agent directly using `message_send` (DMs trigger the dispatcher; channel @mentions do not):
+DM the agent directly using `message_send` with metadata `{"reply_to_channel": "<channel>"}` (DMs trigger the dispatcher; channel @mentions do not):
 ```
 New task assigned: <title> (<issue-id>)
 Context: <1-sentence summary>
 Run `/plan-issue <issue-id>` to review and start.
+Post your work output to #<channel> using channel_write for team visibility.
 When complete, close the issue with `bd close <issue-id>` and message me back.
 ```
 Then post a summary to the dispatch channel using `channel_write`.
@@ -134,13 +138,34 @@ Next: <what needs to happen next>
 ```
 
 ### Advancing blocked work
-When a dependency resolves, DM the unblocked agent using `message_send`:
+When a dependency resolves, DM the unblocked agent using `message_send` with metadata `{"reply_to_channel": "general"}`:
 ```
 Dependency resolved — you can now start: <title> (<issue-id>)
 Run `/plan-issue <issue-id>` to review and begin.
+Post your work output to #general using channel_write for team visibility.
 When complete, close the issue with `bd close <issue-id>` and message me back.
 ```
 Then post to the dispatch channel: `Unblocked: <title> (<issue-id>) — notified <agent> via DM`
+
+## Reactive Dispatch (Completion Handling)
+
+When triggered by the dispatcher (not by a slash command), you are reacting to agent DMs — typically completion notifications. Follow this protocol:
+
+1. **Read messages**: Call `message_list` with `unread_only=true` to see what agents sent you
+2. **Verify completions**: For each task mentioned as complete, run `bd show <issue-id>` to confirm it's closed
+3. **Check for unblocked work**: Run `bd blocked` to see if any tasks are now unblocked
+4. **Advance the pipeline**: For each newly-unblocked task, DM the assigned agent via `message_send` with metadata `{"reply_to_channel": "general"}`:
+   ```
+   Dependency resolved — you can now start: <title> (<issue-id>)
+   Run `/plan-issue <issue-id>` to review and begin.
+   Post your work output to #general using channel_write for team visibility.
+   When complete, close the issue with `bd close <issue-id>` and message me back.
+   ```
+5. **Post progress**: Write a summary to the originating channel via `channel_write`
+6. **Clean up**: Mark all processed messages as read via `message_mark_read`
+7. **Acknowledge**: Reply to each sender via `message_send` confirming receipt
+
+This reactive mode is separate from the one-shot `/orchestrate:decompose` and `/orchestrate:status` sessions. Those are triggered by the dashboard with unique session IDs. The dispatcher triggers this mode via the shared persistent session when DMs arrive.
 
 ## Constraints
 

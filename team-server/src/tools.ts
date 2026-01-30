@@ -88,6 +88,11 @@ export const toolDefinitions = [
           description:
             "Optional thread ID to reply to an existing conversation",
         },
+        metadata: {
+          type: "object",
+          description:
+            'Optional metadata. Use reply_to_channel to route recipient\'s output to a channel. Example: { "reply_to_channel": "research" }',
+        },
       },
       required: ["to", "content"],
     },
@@ -385,12 +390,13 @@ export async function handleToolCall(
 
   switch (name) {
     case "message_send": {
-      const { to, content, thread_id } = args as {
+      const { to, content, thread_id, metadata } = args as {
         to: string;
         content: string;
         thread_id?: string;
+        metadata?: Record<string, unknown>;
       };
-      const messageId = sendMessage(agentId, to, content, thread_id);
+      const messageId = sendMessage(agentId, to, content, thread_id, metadata);
       const result = {
         success: true,
         message_id: messageId,

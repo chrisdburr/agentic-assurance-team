@@ -15,6 +15,7 @@ import {
   deleteAgentSessions,
   getAgentSession,
   getUnreadMessages,
+  type Message,
   postStandup,
 } from "./db.js";
 import { logger } from "./logger.js";
@@ -351,12 +352,36 @@ export function getAgentHealth(agent: string): HealthStatus {
 }
 
 /**
+ * Extract reply_to_channel from message metadata (Layer 1 routing).
+ * Scans messages for the first metadata.reply_to_channel value.
+ */
+function extractChannelRouting(messages?: Message[]): string | null {
+  if (!messages) {
+    return null;
+  }
+  for (const msg of messages) {
+    if (msg.metadata) {
+      try {
+        const meta = JSON.parse(msg.metadata);
+        if (meta.reply_to_channel) {
+          return meta.reply_to_channel;
+        }
+      } catch {
+        // ignore malformed metadata
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Trigger an agent session via Claude CLI
  */
 function triggerAgent(
   agent: string,
   senders?: string[],
-  messagePreview?: string
+  messagePreview?: string,
+  messages?: Message[]
 ): void {
   const sessionId = getSessionId(agent);
 
@@ -388,24 +413,46 @@ function triggerAgent(
       message_preview: messagePreview,
     });
 
-    const prompt =
-      agent === "orchestrator"
-        ? header +
-          "You have new messages from agents reporting task completions or requesting coordination. Do this:\n" +
-          "1. Call message_list with unread_only=true to see completion notifications\n" +
-          "2. For each completed task mentioned, verify it's closed: run `bd show <issue-id>`\n" +
-          "3. Check if any blocked tasks are now unblocked: run `bd blocked`\n" +
-          "4. For each newly-unblocked task, DM the assigned agent via message_send:\n" +
-          '   "Dependency resolved — you can now start: <title> (<issue-id>)\n' +
-          "    Run `/plan-issue <issue-id>` to review and begin.\n" +
-          '    When complete, close the issue with `bd close <issue-id>` and message me back."\n' +
-          "5. Post a progress update to the #general channel via channel_write summarizing what advanced\n" +
-          "6. Mark all processed messages as read via message_mark_read\n" +
-          "7. Reply to each sender via message_send acknowledging their completion"
-        : header +
-          "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" +
-          agent +
-          ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.";
+    let prompt: string;
+
+    if (agent === "orchestrator") {
+      prompt =
+        header +
+        "You have new messages from agents reporting task completions or requesting coordination. Do this:\n" +
+        "1. Call message_list with unread_only=true to see completion notifications\n" +
+        "2. For each completed task mentioned, verify it's closed: run `bd show <issue-id>`\n" +
+        "3. Check if any blocked tasks are now unblocked: run `bd blocked`\n" +
+        "4. For each newly-unblocked task, DM the assigned agent via message_send\n" +
+        '   with metadata {"reply_to_channel": "general"}:\n' +
+        '   "Dependency resolved — you can now start: <title> (<issue-id>)\n' +
+        "    Run `/plan-issue <issue-id>` to review and begin.\n" +
+        "    Post your work output to #general using channel_write for team visibility.\n" +
+        '    When complete, close the issue with `bd close <issue-id>` and message me back."\n' +
+        "5. Post a progress update to the #general channel via channel_write summarizing what advanced\n" +
+        "6. Mark all processed messages as read via message_mark_read\n" +
+        "7. Reply to each sender via message_send acknowledging their completion";
+    } else {
+      // Extract channel routing from message metadata (Layer 1)
+      const channelRouting = extractChannelRouting(messages);
+
+      prompt =
+        header +
+        "You have new DMs. Follow this protocol:\n\n" +
+        "1. Call message_list with unread_only=true to read your messages.\n" +
+        "2. For each message, determine the response channel:\n" +
+        "   a. METADATA: If the message has metadata.reply_to_channel, post substantive output there via channel_write.\n" +
+        "   b. CONTENT: If the message references a #channel, post substantive output there via channel_write.\n" +
+        "   c. DEFAULT: If it's a task assignment with no channel specified, post results to #general via channel_write.\n" +
+        "   d. For simple questions or greetings, reply via message_send.\n" +
+        '3. ALWAYS send a brief DM acknowledgment to the sender ("Done — posted results to #channel").\n' +
+        "4. Mark processed messages as read.\n\n" +
+        "PRINCIPLE: Substantive work goes to channels for team visibility. DMs are for acknowledgments and coordination.";
+
+      // Append explicit routing if metadata was found (Layer 1 override)
+      if (channelRouting) {
+        prompt += `\n\nROUTING: Post your work output to #${channelRouting} using channel_write.`;
+      }
+    }
 
     spawnClaudeSession(agent, sessionId, prompt, (exitCode) => {
       state.activeProcess = null;
@@ -511,7 +558,7 @@ function checkAndTrigger(): void {
       logger.info("Dispatcher", `${agent} has ${count} NEW unread message(s)`, {
         from: senders.join(", "),
       });
-      triggerAgent(agent, senders, messagePreview);
+      triggerAgent(agent, senders, messagePreview, messages);
     } catch (error) {
       logger.error("Dispatcher", `Error checking ${agent}`, {
         error: error instanceof Error ? error.message : String(error),

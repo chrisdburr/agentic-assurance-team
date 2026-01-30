@@ -47,13 +47,24 @@ Progress: X/Y tasks complete (Z%)
 
 ## Step 4: Advance Blocked Work
 
-Check if any issues have become **newly ready** (all their blockers are now closed but the issue is still `open` and not `in_progress`).
+Check if any issues have become **newly ready** (all blockers closed, issue still `open`).
 
-For each newly ready issue, post to #team:
-```
-@<agent> Dependency resolved — you can now start: <title> (<issue-id>)
-Run `/plan-issue <issue-id>` to review and begin.
-```
+For each newly ready issue:
+
+1. **DM the assigned agent** using `message_send` with metadata `{"reply_to_channel": "general"}`:
+   - To: `<agent>`
+   - Content:
+     ```
+     Dependency resolved — you can now start: <title> (<issue-id>)
+     Run `/plan-issue <issue-id>` to review and begin.
+     Post your work output to #general using channel_write for team visibility.
+     When complete, close the issue with `bd close <issue-id>` and message me back.
+     ```
+
+2. **Post to the channel** using `channel_write`:
+   ```
+   Unblocked: <title> (<issue-id>) — notified <agent> via DM
+   ```
 
 ## Step 5: Flag Stalled Work
 
