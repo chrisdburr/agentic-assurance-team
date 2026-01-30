@@ -75,7 +75,8 @@ function spawnClaudeSession(
   agent: string,
   sessionId: string,
   prompt: string,
-  onComplete: (exitCode: number, retried: boolean) => void
+  onComplete: (exitCode: number, retried: boolean) => void,
+  mode: "resume" | "create" = "resume"
 ): void {
   const spawnEnv = { ...process.env, AGENT_ID: agent };
 
@@ -116,7 +117,31 @@ function spawnClaudeSession(
     }
   }
 
-  // Try resume first
+  const state = ensureAgentState(agent);
+
+  // "create" mode: skip resume attempt, go straight to --session-id
+  if (mode === "create") {
+    const proc = Bun.spawn(
+      ["claude", "--session-id", sessionId, prompt, "-p"],
+      { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe", env: spawnEnv }
+    );
+    state.activeProcess = proc;
+    attachLogging(proc);
+
+    proc.exited
+      .then((exitCode) => {
+        onComplete(exitCode, false);
+      })
+      .catch((err) => {
+        logger.error("Dispatcher", `${agent} proc.exited promise rejected`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        onComplete(-1, false);
+      });
+    return;
+  }
+
+  // "resume" mode: try -r first, fall back to --session-id if not found
   const proc = Bun.spawn(["claude", "-r", sessionId, prompt, "-p"], {
     cwd: PROJECT_ROOT,
     stdout: "pipe",
@@ -124,7 +149,6 @@ function spawnClaudeSession(
     env: spawnEnv,
   });
 
-  const state = ensureAgentState(agent);
   state.activeProcess = proc;
 
   // Collect stderr to detect "No conversation found"
@@ -167,33 +191,49 @@ function spawnClaudeSession(
     })();
   }
 
-  proc.exited.then((exitCode) => {
-    const stderrText = stderrChunks.join("");
-    const isSessionNotFound =
-      exitCode !== 0 && stderrText.includes("No conversation found");
+  proc.exited
+    .then((exitCode) => {
+      const stderrText = stderrChunks.join("");
+      const isSessionNotFound =
+        exitCode !== 0 && stderrText.includes("No conversation found");
 
-    if (isSessionNotFound) {
-      logger.info(
-        "Dispatcher",
-        `${agent} session not found, creating new session`,
-        { sessionId }
-      );
+      if (isSessionNotFound) {
+        logger.info(
+          "Dispatcher",
+          `${agent} session not found, creating new session`,
+          { sessionId }
+        );
 
-      // Retry with --session-id to create the session
-      const retryProc = Bun.spawn(
-        ["claude", "--session-id", sessionId, prompt, "-p"],
-        { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe", env: spawnEnv }
-      );
-      state.activeProcess = retryProc;
-      attachLogging(retryProc);
+        // Retry with --session-id to create the session
+        const retryProc = Bun.spawn(
+          ["claude", "--session-id", sessionId, prompt, "-p"],
+          { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe", env: spawnEnv }
+        );
+        state.activeProcess = retryProc;
+        attachLogging(retryProc);
 
-      retryProc.exited.then((retryExitCode) => {
-        onComplete(retryExitCode, true);
+        retryProc.exited
+          .then((retryExitCode) => {
+            onComplete(retryExitCode, true);
+          })
+          .catch((err) => {
+            logger.error(
+              "Dispatcher",
+              `${agent} retry proc.exited promise rejected`,
+              { error: err instanceof Error ? err.message : String(err) }
+            );
+            onComplete(-1, true);
+          });
+      } else {
+        onComplete(exitCode, false);
+      }
+    })
+    .catch((err) => {
+      logger.error("Dispatcher", `${agent} proc.exited promise rejected`, {
+        error: err instanceof Error ? err.message : String(err),
       });
-    } else {
-      onComplete(exitCode, false);
-    }
-  });
+      onComplete(-1, false);
+    });
 }
 
 // State tracking per agent (built dynamically)
@@ -212,6 +252,30 @@ function ensureAgentState(agentId: string): AgentState {
     };
   }
   return agentState[agentId];
+}
+
+/**
+ * Check if an agent's process is still alive.
+ * If the process has exited (exitCode is set), reap the stale state.
+ * Returns true if the process is genuinely still running.
+ */
+function isProcessAlive(state: AgentState): boolean {
+  if (state.activeProcess === null) {
+    return false;
+  }
+
+  // Bun's proc.exitCode is synchronously set once the process exits
+  if (state.activeProcess.exitCode !== null) {
+    logger.info("Dispatcher", "Reaped stale process (already exited)", {
+      exitCode: state.activeProcess.exitCode,
+    });
+    state.lastExitCode = state.activeProcess.exitCode;
+    state.activeProcess = null;
+    state.lastActiveStart = null;
+    return false;
+  }
+
+  return true;
 }
 
 // Track dispatcher state
@@ -243,7 +307,7 @@ function canTrigger(agent: string): boolean {
   }
 
   // Check if already has an active process
-  if (state.activeProcess !== null) {
+  if (isProcessAlive(state)) {
     return false;
   }
 
@@ -264,7 +328,7 @@ export function getAgentHealth(agent: string): HealthStatus {
   const TWO_MINUTES = 2 * 60 * 1000;
 
   // If process is active
-  if (state.activeProcess !== null && state.lastActiveStart !== null) {
+  if (isProcessAlive(state) && state.lastActiveStart !== null) {
     const activeTime = now - state.lastActiveStart;
     if (activeTime > TWO_MINUTES) {
       return "red"; // Stuck - active for more than 2 minutes
@@ -325,10 +389,23 @@ function triggerAgent(
     });
 
     const prompt =
-      header +
-      "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" +
-      agent +
-      ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.";
+      agent === "orchestrator"
+        ? header +
+          "You have new messages from agents reporting task completions or requesting coordination. Do this:\n" +
+          "1. Call message_list with unread_only=true to see completion notifications\n" +
+          "2. For each completed task mentioned, verify it's closed: run `bd show <issue-id>`\n" +
+          "3. Check if any blocked tasks are now unblocked: run `bd blocked`\n" +
+          "4. For each newly-unblocked task, DM the assigned agent via message_send:\n" +
+          '   "Dependency resolved — you can now start: <title> (<issue-id>)\n' +
+          "    Run `/plan-issue <issue-id>` to review and begin.\n" +
+          '    When complete, close the issue with `bd close <issue-id>` and message me back."\n' +
+          "5. Post a progress update to the #general channel via channel_write summarizing what advanced\n" +
+          "6. Mark all processed messages as read via message_mark_read\n" +
+          "7. Reply to each sender via message_send acknowledging their completion"
+        : header +
+          "You have new messages or @mentions. Do this: 1) Call message_list with unread_only=true to see messages directed to you or mentioning you with @" +
+          agent +
+          ", 2) For each unread message, call message_send to reply to the sender. You MUST use the message_send tool to reply - do not just print your response.";
 
     spawnClaudeSession(agent, sessionId, prompt, (exitCode) => {
       state.activeProcess = null;
@@ -365,7 +442,22 @@ function triggerAgent(
 /**
  * Poll for unread messages and trigger agents as needed
  */
+/**
+ * Reap any stale processes across all agents.
+ * Called every poll cycle to ensure exited processes are cleaned up promptly.
+ */
+function reapStaleProcesses(): void {
+  for (const agent of getDispatchableAgentIds()) {
+    const state = agentState[agent];
+    if (state) {
+      isProcessAlive(state);
+    }
+  }
+}
+
 function checkAndTrigger(): void {
+  reapStaleProcesses();
+
   for (const agent of getDispatchableAgentIds()) {
     try {
       const { count, messages } = getUnreadMessages(agent);
@@ -395,13 +487,13 @@ function checkAndTrigger(): void {
           0,
           COOLDOWN - (Date.now() - state.lastTriggerTime)
         );
-        if (remaining > 0 && state.activeProcess === null) {
+        if (remaining > 0 && !isProcessAlive(state)) {
           logger.debug(
             "Dispatcher",
             `${agent} has ${count} NEW unread but in cooldown`,
             { remainingSeconds: Math.ceil(remaining / 1000) }
           );
-        } else if (state.activeProcess !== null) {
+        } else if (isProcessAlive(state)) {
           logger.debug(
             "Dispatcher",
             `${agent} has ${count} NEW unread but session is active`
@@ -526,7 +618,7 @@ export function getDispatcherStatus(): {
         ? new Date(state.lastTriggerTime).toISOString()
         : null,
       lastSeenMessage: state.lastSeenMessageTime || null,
-      active: state.activeProcess !== null,
+      active: isProcessAlive(state),
       triggerCount: state.triggerCount,
       health: getAgentHealth(agent),
       lastExitCode: state.lastExitCode,
@@ -561,7 +653,7 @@ export function manualTrigger(
 
   const state = ensureAgentState(agent);
 
-  if (state.activeProcess !== null) {
+  if (isProcessAlive(state)) {
     return { success: false, error: `${agent} already has an active session` };
   }
 
@@ -586,7 +678,7 @@ export function refreshAgentSession(agent: string): {
 
   const state = ensureAgentState(agent);
 
-  if (state.activeProcess !== null) {
+  if (isProcessAlive(state)) {
     return {
       success: false,
       error: `${agent} has an active session — cannot refresh while running`,
@@ -641,7 +733,7 @@ export function triggerAgentForChannel(
   const state = ensureAgentState(agent);
 
   // Check if agent has an active session (skip if busy)
-  if (state.activeProcess !== null) {
+  if (isProcessAlive(state)) {
     logger.debug(
       "Dispatcher",
       `${agent} is busy, skipping channel trigger for #${channel}`
@@ -1004,7 +1096,10 @@ export function triggerOrchestrator(
       "Run the /orchestrate:decompose skill with this task. " +
       "IMPORTANT: The user has already approved this from the dashboard, so skip the approval gate (do NOT use AskUserQuestion). " +
       "Proceed directly with creating the epic and issues. " +
-      `Post all output and progress updates to the #${params.channel} channel using channel_write.`;
+      `Post all output and progress updates to the #${params.channel} channel using channel_write. ` +
+      "To dispatch work to agents, you MUST use the message_send tool to DM each agent directly. " +
+      "Do NOT rely on @mentions in channel messages — they do not trigger agents. " +
+      "Post a summary to the channel, but send individual DMs to assign work.";
   } else {
     const header = buildDispatchContext({
       timestamp: new Date().toISOString(),
@@ -1019,7 +1114,9 @@ export function triggerOrchestrator(
       header +
       `The user has requested an epic status check from the dashboard. The epic ID is: ${params.epic_id}\n\n` +
       "Run the /orchestrate:status skill for this epic. " +
-      `Post all output and progress updates to the #${params.channel} channel using channel_write.`;
+      `Post all output and progress updates to the #${params.channel} channel using channel_write. ` +
+      "If you need to notify agents of unblocked work, use message_send to DM them directly. " +
+      "Do NOT rely on @mentions in channel messages — they do not trigger agents.";
   }
 
   activeOrchestratorProcess = {
@@ -1040,37 +1137,49 @@ export function triggerOrchestrator(
   }
 
   try {
-    spawnClaudeSession("orchestrator", sessionId, prompt, (exitCode) => {
-      const ended = activeOrchestratorProcess;
-      activeOrchestratorProcess = null;
+    spawnClaudeSession(
+      "orchestrator",
+      sessionId,
+      prompt,
+      (exitCode) => {
+        const ended = activeOrchestratorProcess;
+        activeOrchestratorProcess = null;
 
-      logger.info("Dispatcher", `Orchestrator ${command} session ended`, {
-        sessionId,
-        exitCode,
-      });
+        // Clean up agent-level state so dashboard sees Idle
+        const orchState = ensureAgentState("orchestrator");
+        orchState.activeProcess = null;
+        orchState.lastExitCode = exitCode;
+        orchState.lastActiveStart = null;
 
-      if (broadcast) {
-        if (exitCode === 0) {
-          broadcast("orchestrator_ended", {
-            sessionId,
-            command,
-            channel: params.channel,
-            exitCode,
-            timestamp: new Date().toISOString(),
-            startedAt: ended?.startedAt,
-          });
-        } else {
-          broadcast("orchestrator_failed", {
-            sessionId,
-            command,
-            channel: params.channel,
-            exitCode,
-            timestamp: new Date().toISOString(),
-            startedAt: ended?.startedAt,
-          });
+        logger.info("Dispatcher", `Orchestrator ${command} session ended`, {
+          sessionId,
+          exitCode,
+        });
+
+        if (broadcast) {
+          if (exitCode === 0) {
+            broadcast("orchestrator_ended", {
+              sessionId,
+              command,
+              channel: params.channel,
+              exitCode,
+              timestamp: new Date().toISOString(),
+              startedAt: ended?.startedAt,
+            });
+          } else {
+            broadcast("orchestrator_failed", {
+              sessionId,
+              command,
+              channel: params.channel,
+              exitCode,
+              timestamp: new Date().toISOString(),
+              startedAt: ended?.startedAt,
+            });
+          }
         }
-      }
-    });
+      },
+      "create"
+    );
 
     logger.info("Dispatcher", `Orchestrator ${command} session started`, {
       sessionId,
@@ -1080,6 +1189,12 @@ export function triggerOrchestrator(
     return { success: true, session_id: sessionId };
   } catch (error) {
     activeOrchestratorProcess = null;
+
+    // Clean up agent-level state so dashboard sees Idle
+    const orchState = ensureAgentState("orchestrator");
+    orchState.activeProcess = null;
+    orchState.lastExitCode = -1;
+    orchState.lastActiveStart = null;
 
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error("Dispatcher", `Failed to start orchestrator ${command}`, {
