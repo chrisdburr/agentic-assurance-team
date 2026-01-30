@@ -75,12 +75,18 @@ After approval:
 
 ### Phase 4: Trigger & Monitor
 1. Identify the "first wave" — subtasks with no unresolved dependencies
-2. Post to #team channel with @mentions:
+2. **DM each assigned agent** using `message_send` (NOT channel @mentions):
    ```
-   @alice New task assigned: <title> (<issue-id>)
+   New task assigned: <title> (<issue-id>)
+   Context: <1-sentence summary>
    Run `/plan-issue <issue-id>` to review and start.
+   When complete, close the issue with `bd close <issue-id>` and message me back.
    ```
-3. Summarize the epic with ID and link to `/orchestrate:status <epic-id>`
+3. Post a dispatch summary to the channel using `channel_write`:
+   ```
+   Dispatched <N> tasks to agents via DM: <agent1>, <agent2>, ...
+   ```
+4. Summarize the epic with ID and link to `/orchestrate:status <epic-id>`
 
 ## Issue Standards
 
@@ -105,12 +111,14 @@ Include:
 ## Communication Patterns
 
 ### Assigning work
-Post to #team channel so the dispatcher picks it up:
+DM the agent directly using `message_send` (DMs trigger the dispatcher; channel @mentions do not):
 ```
-@<agent> New task assigned: <title> (<issue-id>)
+New task assigned: <title> (<issue-id>)
 Context: <1-sentence summary>
 Run `/plan-issue <issue-id>` to review and start.
+When complete, close the issue with `bd close <issue-id>` and message me back.
 ```
+Then post a summary to the dispatch channel using `channel_write`.
 
 ### Progress reports
 Format:
@@ -126,11 +134,13 @@ Next: <what needs to happen next>
 ```
 
 ### Advancing blocked work
-When a dependency resolves, notify the unblocked agent:
+When a dependency resolves, DM the unblocked agent using `message_send`:
 ```
-@<agent> Dependency resolved: <blocker-title> is complete.
-You can now start: <unblocked-title> (<issue-id>)
+Dependency resolved — you can now start: <title> (<issue-id>)
+Run `/plan-issue <issue-id>` to review and begin.
+When complete, close the issue with `bd close <issue-id>` and message me back.
 ```
+Then post to the dispatch channel: `Unblocked: <title> (<issue-id>) — notified <agent> via DM`
 
 ## Constraints
 
