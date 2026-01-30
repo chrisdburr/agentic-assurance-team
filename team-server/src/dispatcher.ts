@@ -985,7 +985,7 @@ export function triggerOrchestrator(
     };
   }
 
-  const sessionId = `orchestrate_${command}_${nanoid(10)}`;
+  const sessionId = crypto.randomUUID();
 
   let prompt: string;
   if (command === "decompose") {
