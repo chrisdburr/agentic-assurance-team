@@ -1,7 +1,7 @@
 ---
 description: Fetch a beads issue and create an implementation plan
 argument-hint: <issue-id> ["optional context from user"]
-allowed-tools: Bash(bd show:*), Bash(bd list:*), Bash(bd update:*), Bash(git log:*), Bash(git checkout:*), Bash(git pull:*), Bash(git stash:*)
+allowed-tools: Bash(bd show:*), Bash(bd list:*), Bash(bd update:*), Bash(bd close:*), Bash(bd sync:*), Bash(git log:*), Bash(git checkout:*), Bash(git pull:*), Bash(git stash:*), Bash(git status:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*)
 ---
 
 # Plan Issue Implementation
@@ -34,7 +34,10 @@ Use `bd show <issue-id>` output to identify dependencies. Check parent epics for
 
 Based on the issue details above:
 
-1. **Ask which branch to use as the base:**
+1. **Mark the issue as in progress immediately:**
+   - Run `bd update <issue-id> --status in_progress` before doing anything else
+
+2. **Ask which branch to use as the base:**
    - Use the `AskUserQuestion` tool to ask: "Which branch should I use as the base for this feature branch?"
    - Offer these options:
      - `main` (Recommended) - Standard workflow for standalone features
@@ -42,20 +45,19 @@ Based on the issue details above:
      - Other - Let user specify a different branch
    - Show the current branch name in the "Current branch" option description
 
-2. **Create a feature branch from the chosen base:**
+3. **Create a feature branch from the chosen base:**
    - First, check for uncommitted changes and stash if necessary
    - Checkout the base branch: `git checkout <base-branch>`
    - Pull latest: `git pull`
    - Create a new branch using the pattern: `<type>/<issue-id>_<short-description>`
      - Use `feature/` for features, `fix/` for bugs, `task/` for tasks
      - Example: `feature/team-tv3_migrate-to-baseui` or `fix/team-6oa_rate-limiting`
-   - Mark the issue as in progress: `bd update <issue-id> --status in_progress`
 
-3. **Use the `EnterPlanMode` tool** to enter plan mode for this implementation task
+4. **Use the `EnterPlanMode` tool** to enter plan mode for this implementation task
 
-4. In plan mode, explore the codebase to understand the current state
+5. In plan mode, explore the codebase to understand the current state
 
-5. Create a detailed implementation plan that includes:
+6. Create a detailed implementation plan that includes:
    - Summary of what needs to be done
    - Key files/components that will be affected
    - Step-by-step implementation approach
@@ -63,6 +65,10 @@ Based on the issue details above:
    - Potential risks or blockers
    - **Address any user context** provided in the arguments (preferences, constraints, questions)
 
-6. Write the plan to the plan file and use `ExitPlanMode` when ready for user approval
+7. **Include a final step in the plan** for post-implementation wrap-up:
+   - After all implementation and testing steps, the plan MUST include a final step: **"Commit, close issue, and push"**
+   - This step should state: "Ask the user if they would like to commit the changes and close the issue. If yes: stage the relevant files, commit with a descriptive message, run `bd close <issue-id>`, run `bd sync`, and push to remote."
+
+8. Write the plan to the plan file and use `ExitPlanMode` when ready for user approval
 
 **Important:** Always enter plan mode before making any code changes for non-trivial issues.
