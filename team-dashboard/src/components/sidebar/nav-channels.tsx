@@ -2,7 +2,7 @@
 
 import { ChevronRight, Hash, Loader2, Plus, Settings } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { ChannelManageDialog } from "@/components/channels/channel-manage-dialog";
@@ -43,6 +43,7 @@ const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export function NavChannels() {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(() => {
     if (typeof window === "undefined") {
       return true;
@@ -124,7 +125,12 @@ export function NavChannels() {
                     {!isSystemChannel && (
                       <ChannelManageDialog
                         channel={channel}
-                        onChannelDeleted={() => mutate()}
+                        onChannelDeleted={() => {
+                          mutate();
+                          if (pathname === `/${channel.id}`) {
+                            router.push("/team");
+                          }
+                        }}
                         onMembersChanged={() => mutate()}
                         trigger={
                           <SidebarMenuAction>
