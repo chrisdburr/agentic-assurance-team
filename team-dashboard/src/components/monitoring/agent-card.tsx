@@ -1,16 +1,16 @@
 "use client";
 
+import { Activity, Clock, Play, RefreshCw, Zap } from "lucide-react";
 import { useState } from "react";
-import { Play, Clock, Activity, Zap } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { HealthIndicator } from "./health-indicator";
-import { triggerAgent } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { refreshAgentSession, triggerAgent } from "@/lib/api";
 import { getAgent } from "@/lib/constants";
-import type { AgentMonitoringData } from "@/types";
 import { cn } from "@/lib/utils";
+import type { AgentMonitoringData } from "@/types";
+import { HealthIndicator } from "./health-indicator";
 
 interface AgentCardProps {
   agentId: string;
@@ -43,6 +43,7 @@ function formatRelativeTime(isoString: string): string {
 
 export function AgentCard({ agentId, data, onTrigger }: AgentCardProps) {
   const [isTriggering, setIsTriggering] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const agent = getAgent(agentId);
@@ -60,10 +61,23 @@ export function AgentCard({ agentId, data, onTrigger }: AgentCardProps) {
     }
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setError(null);
+    try {
+      await refreshAgentSession(agentId);
+      onTrigger?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to refresh session");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   const getStatusBadge = () => {
     if (data.active) {
       return (
-        <Badge variant="default" className="bg-blue-500">
+        <Badge className="bg-blue-500" variant="default">
           Active
         </Badge>
       );
@@ -72,7 +86,7 @@ export function AgentCard({ agentId, data, onTrigger }: AgentCardProps) {
       return <Badge variant="secondary">Cooldown</Badge>;
     }
     return (
-      <Badge variant="outline" className="text-muted-foreground">
+      <Badge className="text-muted-foreground" variant="outline">
         Idle
       </Badge>
     );
@@ -85,18 +99,20 @@ export function AgentCard({ agentId, data, onTrigger }: AgentCardProps) {
           <div className="flex items-center gap-3">
             <div className="relative">
               <Avatar size="lg">
-                {agent.avatar && <AvatarImage src={agent.avatar} alt={agent.name} />}
+                {agent.avatar && (
+                  <AvatarImage alt={agent.name} src={agent.avatar} />
+                )}
                 <AvatarFallback className={cn(agent.bgColor, "text-white")}>
                   {agent.name[0]}
                 </AvatarFallback>
               </Avatar>
-              <span className="absolute -bottom-0.5 -right-0.5">
-                <HealthIndicator status={data.health} size="md" />
+              <span className="absolute -right-0.5 -bottom-0.5">
+                <HealthIndicator size="md" status={data.health} />
               </span>
             </div>
             <div>
               <CardTitle className="text-lg">{agent.name}</CardTitle>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="mt-1 flex items-center gap-2">
                 {getStatusBadge()}
               </div>
             </div>
@@ -129,7 +145,7 @@ export function AgentCard({ agentId, data, onTrigger }: AgentCardProps) {
           </div>
         )}
         {data.cooldownRemainingMs !== null && data.cooldownRemainingMs > 0 && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Clock className="h-4 w-4" />
             <span>Cooldown: {formatDuration(data.cooldownRemainingMs)}</span>
           </div>
@@ -137,24 +153,41 @@ export function AgentCard({ agentId, data, onTrigger }: AgentCardProps) {
 
         {/* Last exit code if non-zero */}
         {data.lastExitCode !== null && data.lastExitCode !== 0 && (
-          <div className="text-sm text-red-500">
+          <div className="text-red-500 text-sm">
             Last exit code: {data.lastExitCode}
           </div>
         )}
 
         {/* Error message */}
-        {error && <div className="text-sm text-red-500">{error}</div>}
+        {error && <div className="text-red-500 text-sm">{error}</div>}
 
-        {/* Trigger button */}
-        <Button
-          onClick={handleTrigger}
-          disabled={isTriggering || data.active}
-          className="w-full"
-          variant={data.active ? "secondary" : "default"}
-        >
-          <Play className="h-4 w-4 mr-2" />
-          {isTriggering ? "Triggering..." : data.active ? "Running" : "Trigger"}
-        </Button>
+        {/* Action buttons */}
+        <div className="flex gap-2">
+          <Button
+            className="flex-1"
+            disabled={isTriggering || data.active}
+            onClick={handleTrigger}
+            variant={data.active ? "secondary" : "default"}
+          >
+            <Play className="mr-2 h-4 w-4" />
+            {isTriggering
+              ? "Triggering..."
+              : data.active
+                ? "Running"
+                : "Trigger"}
+          </Button>
+          <Button
+            disabled={isRefreshing || data.active}
+            onClick={handleRefresh}
+            size="icon"
+            title="Refresh session"
+            variant="outline"
+          >
+            <RefreshCw
+              className={cn("h-4 w-4", isRefreshing && "animate-spin")}
+            />
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

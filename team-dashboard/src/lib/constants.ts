@@ -47,7 +47,7 @@ export function getAgent(id: string) {
     AGENTS[id as AgentId] || {
       id,
       name: id.charAt(0).toUpperCase() + id.slice(1),
-      avatar: undefined as string | undefined,
+      avatar: `/avatars/${id}.png`,
       color: "muted",
       bgColor: "bg-muted-foreground",
       textColor: "text-muted-foreground",

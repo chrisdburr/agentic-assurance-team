@@ -9,7 +9,29 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CLAUDE_HOOK_EVENT=SessionStart .claude/hooks/log-activity.sh"
+            "command": "CLAUDE_HOOK_EVENT=SessionStart $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CLAUDE_HOOK_EVENT=SessionEnd $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CLAUDE_HOOK_EVENT=UserPromptSubmit $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
           }
         ]
       }
@@ -20,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CLAUDE_HOOK_EVENT=PreToolUse .claude/hooks/log-activity.sh"
+            "command": "CLAUDE_HOOK_EVENT=PreToolUse $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
           }
         ]
       }
@@ -31,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CLAUDE_HOOK_EVENT=PostToolUse .claude/hooks/log-activity.sh"
+            "command": "CLAUDE_HOOK_EVENT=PostToolUse $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
           }
         ]
       }
@@ -42,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CLAUDE_HOOK_EVENT=PostToolUseFailure .claude/hooks/log-activity.sh"
+            "command": "CLAUDE_HOOK_EVENT=PostToolUseFailure $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
           }
         ]
       }
@@ -53,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CLAUDE_HOOK_EVENT=Stop .claude/hooks/log-activity.sh"
+            "command": "CLAUDE_HOOK_EVENT=Stop $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
           }
         ]
       },
@@ -62,7 +84,40 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/stop-check-inbox.sh"
+            "command": "$(git rev-parse --show-toplevel)/.claude/hooks/stop-check-inbox.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CLAUDE_HOOK_EVENT=SubagentStart $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CLAUDE_HOOK_EVENT=SubagentStop $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CLAUDE_HOOK_EVENT=PreCompact $(git rev-parse --show-toplevel)/.claude/hooks/log-conversation.sh"
           }
         ]
       }

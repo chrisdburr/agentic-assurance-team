@@ -3,6 +3,7 @@ name: code-review
 description: Code reviewer focused on clean code, skill adherence, and best practices. Use after completing a feature or fix to validate quality, test value, and code standards. Invoked automatically after plan-issue work or manually via Task tool.
 tools: Read, Grep, Glob, Bash
 model: opus
+system: true
 ---
 
 # Code Quality Reviewer

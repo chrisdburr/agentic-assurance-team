@@ -14,15 +14,11 @@ Parse the arguments:
 
 ## Issue Details
 
-Fetch the issue information using only the issue ID (first word of arguments):
-
-!`bd show $(echo "$ARGUMENTS" | awk '{print $1}')`
+The issue ID is the **first word** of the arguments. Run `bd show <issue-id>` to fetch details.
 
 ## User Context
 
-Extract any additional context provided by the user (everything after the issue ID):
-
-!`echo "$ARGUMENTS" | sed 's/^[^ ]* *//' | grep -v '^$' || echo "No additional context provided"`
+Any text after the issue ID is **user context** that must be incorporated into the plan.
 
 If user context was provided above, you MUST incorporate it into your implementation plan. The user's context may include:
 - Specific implementation preferences or constraints
@@ -32,9 +28,7 @@ If user context was provided above, you MUST incorporate it into your implementa
 
 ## Related Context
 
-Check for any dependencies or blockers:
-
-!`bd list --status open 2>/dev/null | grep -E "(blocks|blocked)" | head -5 || echo "No blocking relationships found"`
+Use `bd show <issue-id>` output to identify dependencies. Check parent epics for additional context if mentioned.
 
 ## Your Task
 

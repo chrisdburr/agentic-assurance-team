@@ -32,13 +32,13 @@ export function AgentLibraryCard({ agent, onClick }: AgentLibraryCardProps) {
               className={cn(
                 displayInfo.bgColor,
                 "text-white",
-                !agent.is_team_agent && "bg-muted-foreground"
+                agent.is_system && "bg-muted-foreground"
               )}
             >
-              {agent.is_team_agent ? (
-                agent.name[0].toUpperCase()
-              ) : (
+              {agent.is_system ? (
                 <Bot className="h-4 w-4" />
+              ) : (
+                agent.name[0].toUpperCase()
               )}
             </AvatarFallback>
           </Avatar>
@@ -50,9 +50,9 @@ export function AgentLibraryCard({ agent, onClick }: AgentLibraryCardProps) {
               <Badge className="text-xs" variant="outline">
                 {agent.model}
               </Badge>
-              {agent.is_team_agent && (
+              {agent.is_system && (
                 <Badge className="text-xs" variant="secondary">
-                  Team
+                  System
                 </Badge>
               )}
             </div>
