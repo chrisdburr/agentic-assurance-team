@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:arxiv.org)",
+      "mcp__team__message_send",
+      "mcp__team__message_list",
+      "mcp__team__message_mark_read",
+      "mcp__team__message_thread",
+      "mcp__team__standup_post",
+      "mcp__team__standup_today",
+      "mcp__team__standup_orchestrate",
+      "mcp__team__standup_session_get",
+      "mcp__team__status_update",
+      "mcp__team__status_team",
+      "mcp__team__team_roster",
+      "mcp__team__ask_agent",
+      "mcp__team__channel_read",
+      "mcp__team__channel_write",
+      "mcp__team__channel_list",
+      "mcp__team__session_list",
+      "mcp__team__session_read",
+      "mcp__team__session_search",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "WebFetch(domain:ui.shadcn.com)",
+      "Bash(wc:*)",
+      "WebFetch(domain:base-ui.com)",
+      "WebFetch(domain:www.radix-ui.com)",
+      "Bash(npm search @base-ui)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npm run build:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(bun tsc:*)",
+      "Bash(bun run lint:*)",
+      "Bash(bun run build:*)",
+      "Bash(find:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "memory-server",
+    "team"
+  ]
+}

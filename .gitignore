@@ -13,6 +13,9 @@ build/
 # Memory server data (per-session knowledge graph)
 .agents/memory/
 
+# Session logs (runtime conversation history)
+.agents/logs/
+
 # Git worktrees (agent working directories)
 .worktrees/
 
@@ -20,6 +23,9 @@ build/
 .env
 .env.local
 .env.*.local
+
+# Override global gitignore to track project-level Claude settings
+!.claude/settings.local.json
 
 # Editor/IDE
 .vscode/
@@ -49,3 +55,5 @@ projects/notes/*/
 !projects/apps/.gitkeep
 !projects/papers/.gitkeep
 !projects/notes/.gitkeep
+# next-agents-md
+.next-docs/
