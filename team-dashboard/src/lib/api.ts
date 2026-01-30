@@ -71,9 +71,8 @@ export async function fetchDMMessages(agent: string): Promise<Message[]> {
   // Filter to only messages in this specific conversation
   // - Messages FROM user TO agent
   // - Messages FROM agent TO user (or to the user's actual username)
-  const AGENT_IDS = ["alice", "bob", "charlie"];
   const userToAgent = toAgent.filter((m) => m.from_agent === "user");
-  const agentToUser = fromAgent.filter((m) => !AGENT_IDS.includes(m.to_agent));
+  const agentToUser = fromAgent.filter((m) => m.to_agent !== agent);
 
   // Merge and sort by timestamp
   const all = [...userToAgent, ...agentToUser];
