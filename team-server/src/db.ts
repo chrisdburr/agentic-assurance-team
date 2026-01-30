@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
+import { getDispatchableAgentIds } from "./agents.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -218,6 +219,26 @@ const selectSession = db.prepare(
 const insertSession = db.prepare(
   `INSERT INTO sessions (type, user_id, channel_id, project_path, agent_id, session_id)
    VALUES ($type, $userId, $channelId, $projectPath, $agentId, $sessionId)`
+);
+
+const deleteSessionById = db.prepare(
+  "DELETE FROM sessions WHERE session_id = $sessionId"
+);
+
+const deleteSessionsByAgent = db.prepare(
+  "DELETE FROM sessions WHERE project_path = $projectPath AND agent_id = $agentId"
+);
+
+// Simple agent session lookup (one session per agent, regardless of context)
+const selectAgentSession = db.prepare(
+  `SELECT session_id FROM sessions
+   WHERE project_path = $projectPath AND agent_id = $agentId
+   LIMIT 1`
+);
+
+const insertAgentSession = db.prepare(
+  `INSERT INTO sessions (type, project_path, agent_id, session_id)
+   VALUES ('dm', $projectPath, $agentId, $sessionId)`
 );
 
 // Channel prepared statements
@@ -617,13 +638,55 @@ export function getOrCreateSession(
     return existing.session_id;
   }
 
-  // Create new session with UUID
-  const sessionId = `${type}-${agentId}-${nanoid()}`;
+  // Create new session with UUID (required by Claude CLI --resume)
+  const sessionId = crypto.randomUUID();
 
   insertSession.run({
     $type: type,
     $userId: userId || null,
     $channelId: channelId || null,
+    $projectPath: projectPath,
+    $agentId: agentId,
+    $sessionId: sessionId,
+  });
+
+  return sessionId;
+}
+
+export function deleteSession(sessionId: string): void {
+  deleteSessionById.run({ $sessionId: sessionId });
+}
+
+export function deleteAgentSessions(
+  projectPath: string,
+  agentId: string
+): number {
+  const result = deleteSessionsByAgent.run({
+    $projectPath: projectPath,
+    $agentId: agentId,
+  });
+  return result.changes;
+}
+
+/**
+ * Get or create a single session for an agent (shared across all contexts).
+ * Each agent has ONE session that persists across DMs, channels, etc.
+ */
+export function getAgentSession(projectPath: string, agentId: string): string {
+  // Look for existing agent session (any context)
+  const existing = selectAgentSession.get({
+    $projectPath: projectPath,
+    $agentId: agentId,
+  }) as { session_id: string } | undefined;
+
+  if (existing) {
+    return existing.session_id;
+  }
+
+  // Create new session with UUID (required by Claude CLI --resume)
+  const sessionId = crypto.randomUUID();
+
+  insertAgentSession.run({
     $projectPath: projectPath,
     $agentId: agentId,
     $sessionId: sessionId,
@@ -790,7 +853,7 @@ function seedDefaultChannels(): void {
     return; // Channels already exist
   }
 
-  console.log("[DB] Seeding default channels: team, research");
+  console.log("[DB] Seeding default channels: team, research, test");
 
   // Create default channels with "system" owner
   const projectPath = PROJECT_ROOT;
@@ -810,11 +873,13 @@ function seedDefaultChannels(): void {
       "system",
       "Research discussion"
     );
+    createChannel("test", "test", projectPath, "system", "Testing channel");
 
     // Add all agents to default channels
-    for (const agent of ["alice", "bob", "charlie"]) {
+    for (const agent of getDispatchableAgentIds()) {
       addChannelMember("team", "agent", agent, "member");
       addChannelMember("research", "agent", agent, "member");
+      addChannelMember("test", "agent", agent, "member");
     }
   } catch (err) {
     console.error("[DB] Error seeding default channels:", err);

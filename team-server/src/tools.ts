@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getDispatchableAgentIds, isDispatchableAgent } from "./agents.js";
 import {
   appendChannelMessage,
   type ChannelMessage,
@@ -28,6 +29,11 @@ import {
   startStandupQueue,
 } from "./dispatcher.js";
 import { logger } from "./logger.js";
+import {
+  listAgentSessions,
+  readAgentSession,
+  searchAgentSessions,
+} from "./session-logs.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -240,7 +246,6 @@ export const toolDefinitions = [
       properties: {
         agent: {
           type: "string",
-          enum: ["alice", "bob", "charlie"],
           description: "The agent to ask (alice, bob, or charlie)",
         },
         question: {
@@ -302,6 +307,72 @@ export const toolDefinitions = [
     inputSchema: {
       type: "object" as const,
       properties: {},
+    },
+  },
+  {
+    name: "session_list",
+    description:
+      "List your past conversation sessions. Returns session metadata including start/end times and event counts.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of sessions to return (default 20)",
+          default: 20,
+        },
+      },
+    },
+  },
+  {
+    name: "session_read",
+    description:
+      "Read the transcript of a specific conversation session. Returns all logged events (tool uses, prompts, errors) for that session.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        session_id: {
+          type: "string",
+          description: "The session ID to read",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of events to return (default 100)",
+          default: 100,
+        },
+        offset: {
+          type: "number",
+          description: "Number of events to skip (default 0)",
+          default: 0,
+        },
+      },
+      required: ["session_id"],
+    },
+  },
+  {
+    name: "session_search",
+    description:
+      "Search across your conversation sessions for specific text. Searches tool names, prompts, errors, and other event fields.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Text to search for (case-insensitive)",
+        },
+        event_types: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional filter by event types (e.g. PreToolUse, PostToolUseFailure)",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of matches to return (default 20)",
+          default: 20,
+        },
+      },
+      required: ["query"],
     },
   },
 ];
@@ -455,7 +526,7 @@ export async function handleToolCall(
         channel,
         message:
           "Standup session started. Agents will respond sequentially in the channel.",
-        agents: ["alice", "bob", "charlie"],
+        agents: getDispatchableAgentIds(),
       };
     }
 
@@ -495,6 +566,16 @@ export async function handleToolCall(
 
     case "ask_agent": {
       const { agent, question } = args as { agent: string; question: string };
+
+      // Validate agent is a dispatchable team agent
+      if (!isDispatchableAgent(agent)) {
+        const validAgents = getDispatchableAgentIds();
+        return {
+          success: false,
+          error: `Unknown agent "${agent}". Valid agents: ${validAgents.join(", ")}`,
+        };
+      }
+
       const callerAgent = getAgentId();
       const currentDepth = getAskDepth();
       const callerChain = getCallerChain();
@@ -738,6 +819,46 @@ export async function handleToolCall(
               : "Research discussions and collaboration",
         })),
       };
+    }
+
+    case "session_list": {
+      const { limit = 20 } = args as { limit?: number };
+      const sessions = listAgentSessions(agentId, limit);
+      return {
+        agent: agentId,
+        count: sessions.length,
+        sessions,
+      };
+    }
+
+    case "session_read": {
+      const {
+        session_id,
+        limit = 100,
+        offset = 0,
+      } = args as {
+        session_id: string;
+        limit?: number;
+        offset?: number;
+      };
+      const session = readAgentSession(agentId, session_id, limit, offset);
+      if (!session) {
+        return { error: `Session ${session_id} not found` };
+      }
+      return session;
+    }
+
+    case "session_search": {
+      const {
+        query,
+        event_types,
+        limit = 20,
+      } = args as {
+        query: string;
+        event_types?: string[];
+        limit?: number;
+      };
+      return searchAgentSessions(agentId, query, limit, event_types);
     }
 
     default:

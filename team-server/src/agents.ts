@@ -17,6 +17,7 @@ export interface Agent {
   is_system: boolean;
   owner: string | null;
   allowed_tools?: string[];
+  dispatchable: boolean;
 }
 
 export interface CreateAgentInput {
@@ -128,6 +129,7 @@ function parseAgentFile(filePath: string): Agent | null {
       is_system: frontmatter.system === "true",
       owner: (frontmatter.owner as string) || null,
       allowed_tools: frontmatter.allowedTools as string[] | undefined,
+      dispatchable: frontmatter.dispatchable === "true",
     };
   } catch (error) {
     console.error(`Failed to parse agent file ${filePath}:`, error);
@@ -177,6 +179,36 @@ export function getAgentById(id: string): Agent | null {
   }
 
   return parseAgentFile(filePath);
+}
+
+// Dispatchable agent registry with TTL cache
+const DISPATCHABLE_CACHE_TTL = 30_000; // 30 seconds
+let dispatchableCache: { ids: string[]; timestamp: number } | null = null;
+
+/**
+ * Get IDs of all agents with `dispatchable: true` in frontmatter.
+ * Results are cached for 30s to avoid disk reads on every poll cycle.
+ */
+export function getDispatchableAgentIds(): string[] {
+  const now = Date.now();
+  if (
+    dispatchableCache &&
+    now - dispatchableCache.timestamp < DISPATCHABLE_CACHE_TTL
+  ) {
+    return dispatchableCache.ids;
+  }
+
+  const agents = listAgents();
+  const ids = agents.filter((a) => a.dispatchable).map((a) => a.id);
+  dispatchableCache = { ids, timestamp: now };
+  return ids;
+}
+
+/**
+ * Check if a given agent ID is dispatchable.
+ */
+export function isDispatchableAgent(id: string): boolean {
+  return getDispatchableAgentIds().includes(id);
 }
 
 // Validate agent name for creating new agents
@@ -234,6 +266,7 @@ export function createAgent(input: CreateAgentInput): Agent {
   if (input.owner) {
     lines.push(`owner: ${input.owner}`);
   }
+  lines.push("dispatchable: true");
   lines.push("permissionMode: dontAsk");
 
   // Add allowed tools if provided
@@ -253,6 +286,9 @@ export function createAgent(input: CreateAgentInput): Agent {
 
   writeFileSync(filePath, content, "utf-8");
 
+  // Invalidate dispatchable cache when a new agent is created
+  dispatchableCache = null;
+
   return {
     id: input.name,
     name: input.name,
@@ -262,6 +298,7 @@ export function createAgent(input: CreateAgentInput): Agent {
     is_system: false,
     owner: input.owner || null,
     allowed_tools: input.allowed_tools,
+    dispatchable: true,
   };
 }
 
@@ -291,6 +328,8 @@ export function deleteAgent(
 
   try {
     unlinkSync(filePath);
+    // Invalidate dispatchable cache when an agent is deleted
+    dispatchableCache = null;
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

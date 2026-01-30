@@ -13,6 +13,8 @@ import {
   deleteAgent,
   generateSystemPrompt,
   getAgentById,
+  getDispatchableAgentIds,
+  isDispatchableAgent,
   listAgents,
   updateAgent,
 } from "./agents.js";
@@ -67,21 +69,31 @@ import {
   triggerAgentForChannel,
 } from "./dispatcher.js";
 import { logger } from "./logger.js";
+import {
+  listAgentSessions,
+  readAgentSession,
+  searchAgentSessions,
+} from "./session-logs.js";
 import { handleToolCall, toolDefinitions } from "./tools.js";
 
 // Parse @mentions from message content (for DMs - channels use channels.ts version)
-// Supports @alice, @bob, @charlie, @team (expands to all three)
+// Supports @agentname and @team (expands to all dispatchable agents)
 function parseDMMentions(content: string): string[] {
-  const mentionRegex = /@(alice|bob|charlie|team)\b/gi;
+  const dispatchable = getDispatchableAgentIds();
+  const pattern =
+    dispatchable.length > 0
+      ? `@(${dispatchable.join("|")}|team)\\b`
+      : "@(team)\\b";
+  const mentionRegex = new RegExp(pattern, "gi");
   const matches = content.match(mentionRegex) || [];
 
   const mentions = new Set<string>();
   for (const match of matches) {
     const mention = match.slice(1).toLowerCase(); // Remove @ and lowercase
     if (mention === "team") {
-      mentions.add("alice");
-      mentions.add("bob");
-      mentions.add("charlie");
+      for (const id of dispatchable) {
+        mentions.add(id);
+      }
     } else {
       mentions.add(mention);
     }
@@ -96,8 +108,8 @@ function triggerMentionedAgents(
   message: ChannelMessage
 ): Promise<void> {
   for (const agentId of message.mentions) {
-    // Only trigger valid agents
-    if (["alice", "bob", "charlie"].includes(agentId)) {
+    // Only trigger dispatchable agents
+    if (isDispatchableAgent(agentId)) {
       logger.info(
         "Channel",
         `Triggering ${agentId} for @mention in #${channel}`
@@ -288,7 +300,7 @@ function runHttpServer() {
       // Immediately trigger the recipient agent if it's an AI agent
       // This provides faster response than waiting for polling
       // Pass username so the agent knows who sent the message
-      if (["alice", "bob", "charlie"].includes(to)) {
+      if (isDispatchableAgent(to)) {
         const username = c.req.header("x-username") || "user";
         const triggerResult = manualTrigger(
           to,
@@ -641,7 +653,7 @@ function runHttpServer() {
         channel,
         message:
           "Standup session started. Agents will respond sequentially in the channel.",
-        agents: ["alice", "bob", "charlie"],
+        agents: getDispatchableAgentIds(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -695,6 +707,46 @@ function runHttpServer() {
       pending_agents: queue.pendingAgents,
       started_at: queue.startedAt,
     });
+  });
+
+  // Session Logs API Routes (for dashboard access to agent conversation history)
+
+  // List sessions for an agent
+  app.get("/api/sessions/:agentId", (c) => {
+    const agentId = c.req.param("agentId");
+    const limit = Number.parseInt(c.req.query("limit") || "20", 10);
+    const sessions = listAgentSessions(agentId, limit);
+    return c.json({ agent: agentId, count: sessions.length, sessions });
+  });
+
+  // Search sessions for an agent (must come before :sessionId route)
+  app.get("/api/sessions/:agentId/search", (c) => {
+    const agentId = c.req.param("agentId");
+    const query = c.req.query("q") || "";
+    const limit = Number.parseInt(c.req.query("limit") || "20", 10);
+    const eventTypesParam = c.req.query("event_types");
+    const eventTypes = eventTypesParam ? eventTypesParam.split(",") : undefined;
+
+    if (!query) {
+      return c.json({ error: "Query parameter 'q' is required" }, 400);
+    }
+
+    const results = searchAgentSessions(agentId, query, limit, eventTypes);
+    return c.json(results);
+  });
+
+  // Read a specific session transcript
+  app.get("/api/sessions/:agentId/:sessionId", (c) => {
+    const agentId = c.req.param("agentId");
+    const sessionId = c.req.param("sessionId");
+    const limit = Number.parseInt(c.req.query("limit") || "100", 10);
+    const offset = Number.parseInt(c.req.query("offset") || "0", 10);
+
+    const session = readAgentSession(agentId, sessionId, limit, offset);
+    if (!session) {
+      return c.json({ error: `Session ${sessionId} not found` }, 404);
+    }
+    return c.json(session);
   });
 
   // Channel API Routes
@@ -763,7 +815,7 @@ function runHttpServer() {
       );
 
       // Add all agents to the new channel by default
-      for (const agent of ["alice", "bob", "charlie"]) {
+      for (const agent of getDispatchableAgentIds()) {
         addChannelMember(id, "agent", agent, "member");
       }
 
