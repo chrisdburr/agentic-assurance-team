@@ -10,8 +10,11 @@ import { serveStatic } from "hono/bun";
 import {
   type CreateAgentInput,
   createAgent,
+  deleteAgent,
+  generateSystemPrompt,
   getAgentById,
   listAgents,
+  updateAgent,
 } from "./agents.js";
 import {
   appendChannelMessage,
@@ -1071,6 +1074,37 @@ function runHttpServer() {
     return c.json({ agent });
   });
 
+  // Generate a system prompt using Claude CLI + team-app-assistant agent
+  app.post("/api/agents/generate-prompt", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { name, description, model } = body as {
+        name?: string;
+        description?: string;
+        model?: string;
+      };
+
+      if (
+        !description ||
+        typeof description !== "string" ||
+        !description.trim()
+      ) {
+        return c.json({ error: "Description is required" }, 400);
+      }
+
+      const systemPrompt = await generateSystemPrompt(
+        name?.trim() || "",
+        description.trim(),
+        model?.trim() || "sonnet"
+      );
+
+      return c.json({ system_prompt: systemPrompt });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: msg }, 500);
+    }
+  });
+
   // Create a new agent
   app.post("/api/agents", async (c) => {
     try {
@@ -1091,11 +1125,13 @@ function runHttpServer() {
         return c.json({ error: "System prompt is required" }, 400);
       }
 
+      const owner = c.req.header("x-username") || null;
       const agent = createAgent({
         name: name.trim().toLowerCase(),
         description: description.trim(),
         model: model.trim(),
         system_prompt: system_prompt.trim(),
+        owner: owner || undefined,
         allowed_tools: body.allowed_tools,
       });
 
@@ -1106,6 +1142,76 @@ function runHttpServer() {
       const msg = error instanceof Error ? error.message : String(error);
       return c.json({ error: msg }, 400);
     }
+  });
+
+  // Update an agent (owner only, no system agents)
+  app.patch("/api/agents/:id", async (c) => {
+    const id = c.req.param("id");
+    const username = c.req.header("x-username");
+
+    if (!username) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    try {
+      const body = await c.req.json();
+      const { allowed_tools } = body as { allowed_tools?: unknown };
+
+      if (
+        allowed_tools !== undefined &&
+        !(
+          Array.isArray(allowed_tools) &&
+          allowed_tools.every((t: unknown) => typeof t === "string")
+        )
+      ) {
+        return c.json(
+          { error: "allowed_tools must be an array of strings" },
+          400
+        );
+      }
+
+      const updated = updateAgent(
+        id,
+        { allowed_tools: allowed_tools as string[] | undefined },
+        username
+      );
+
+      broadcast("agent_updated", { agent: updated });
+
+      return c.json({ success: true, agent: updated });
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: msg }, status);
+    }
+  });
+
+  // Delete an agent (owner only, no system agents)
+  app.delete("/api/agents/:id", (c) => {
+    const id = c.req.param("id");
+    const username = c.req.header("x-username");
+
+    if (!username) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const result = deleteAgent(id, username);
+    if (!result.success) {
+      let status = 500;
+      if (result.error.includes("not found")) {
+        status = 404;
+      } else if (
+        result.error.includes("System") ||
+        result.error.includes("owner")
+      ) {
+        status = 403;
+      }
+      return c.json({ error: result.error }, status);
+    }
+
+    broadcast("agent_deleted", { id });
+
+    return c.json({ success: true });
   });
 
   // Start Bun server with WebSocket support

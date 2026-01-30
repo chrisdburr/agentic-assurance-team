@@ -19,11 +19,14 @@ export function AgentsLibrary() {
     refreshInterval: 30_000,
   });
 
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
 
+  // Derive selectedAgent from the live SWR data so it stays fresh after mutate()
+  const selectedAgent = agents?.find((a) => a.id === selectedAgentId) ?? null;
+
   const handleAgentClick = (agent: Agent) => {
-    setSelectedAgent(agent);
+    setSelectedAgentId(agent.id);
     setDetailDialogOpen(true);
   };
 
@@ -81,6 +84,8 @@ export function AgentsLibrary() {
 
       <AgentDetailDialog
         agent={selectedAgent}
+        onAgentDeleted={() => mutate()}
+        onAgentUpdated={() => mutate()}
         onOpenChange={setDetailDialogOpen}
         open={detailDialogOpen}
       />

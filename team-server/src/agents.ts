@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -13,7 +14,8 @@ export interface Agent {
   description: string;
   model: string;
   system_prompt: string;
-  is_team_agent: boolean;
+  is_system: boolean;
+  owner: string | null;
   allowed_tools?: string[];
 }
 
@@ -22,11 +24,13 @@ export interface CreateAgentInput {
   description: string;
   model: string;
   system_prompt: string;
+  owner?: string;
   allowed_tools?: string[];
 }
 
-// Team agents defined in .claude/agents (alice, bob, charlie)
-const TEAM_AGENTS = new Set(["alice", "bob", "charlie"]);
+export interface UpdateAgentInput {
+  allowed_tools?: string[];
+}
 
 // Top-level regex patterns for performance
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
@@ -121,7 +125,8 @@ function parseAgentFile(filePath: string): Agent | null {
       description: (frontmatter.description as string) || "",
       model: (frontmatter.model as string) || "sonnet",
       system_prompt: body.trim(),
-      is_team_agent: TEAM_AGENTS.has(filename),
+      is_system: frontmatter.system === "true",
+      owner: (frontmatter.owner as string) || null,
       allowed_tools: frontmatter.allowedTools as string[] | undefined,
     };
   } catch (error) {
@@ -150,13 +155,13 @@ export function listAgents(): Agent[] {
     }
   }
 
-  // Sort: team agents first, then alphabetically
+  // Sort: user agents first, system agents last, then alphabetically
   return agents.sort((a, b) => {
-    if (a.is_team_agent && !b.is_team_agent) {
-      return -1;
-    }
-    if (!a.is_team_agent && b.is_team_agent) {
+    if (a.is_system && !b.is_system) {
       return 1;
+    }
+    if (!a.is_system && b.is_system) {
+      return -1;
     }
     return a.name.localeCompare(b.name);
   });
@@ -226,6 +231,9 @@ export function createAgent(input: CreateAgentInput): Agent {
   lines.push(`name: ${input.name}`);
   lines.push(`description: ${input.description}`);
   lines.push(`model: ${input.model}`);
+  if (input.owner) {
+    lines.push(`owner: ${input.owner}`);
+  }
   lines.push("permissionMode: dontAsk");
 
   // Add allowed tools if provided
@@ -251,7 +259,190 @@ export function createAgent(input: CreateAgentInput): Agent {
     description: input.description,
     model: input.model,
     system_prompt: input.system_prompt,
-    is_team_agent: false,
+    is_system: false,
+    owner: input.owner || null,
     allowed_tools: input.allowed_tools,
   };
+}
+
+// Delete an agent by ID (only non-system agents, only by the owner)
+export function deleteAgent(
+  id: string,
+  requestingUser: string
+): { success: true } | { success: false; error: string } {
+  const agent = getAgentById(id);
+  if (!agent) {
+    return { success: false, error: `Agent not found: ${id}` };
+  }
+
+  if (agent.is_system) {
+    return { success: false, error: "System agents cannot be deleted" };
+  }
+
+  if (agent.owner !== requestingUser) {
+    return {
+      success: false,
+      error: "Only the owner can delete this agent",
+    };
+  }
+
+  const agentsDir = getAgentsDir();
+  const filePath = join(agentsDir, `${id}.md`);
+
+  try {
+    unlinkSync(filePath);
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: `Failed to delete agent file: ${message}` };
+  }
+}
+
+// Update an existing agent (only non-system agents, only by the owner)
+export function updateAgent(
+  id: string,
+  input: UpdateAgentInput,
+  requestingUser: string
+): Agent {
+  const agent = getAgentById(id);
+  if (!agent) {
+    const err = new Error(`Agent not found: ${id}`);
+    (err as Error & { status: number }).status = 404;
+    throw err;
+  }
+
+  if (agent.is_system) {
+    const err = new Error("System agents cannot be modified");
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+
+  if (agent.owner !== requestingUser) {
+    const err = new Error("Only the owner can modify this agent");
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+
+  const agentsDir = getAgentsDir();
+  const filePath = join(agentsDir, `${id}.md`);
+  const content = readFileSync(filePath, "utf-8");
+  const { frontmatter, body } = parseFrontmatter(content);
+
+  // Apply updates
+  if (input.allowed_tools !== undefined) {
+    if (input.allowed_tools.length > 0) {
+      frontmatter.allowedTools = input.allowed_tools;
+    } else {
+      frontmatter.allowedTools = undefined;
+    }
+  }
+
+  // Rebuild file
+  const lines: string[] = ["---"];
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      lines.push(`${key}:`);
+      for (const item of value) {
+        lines.push(`  - ${item}`);
+      }
+    } else {
+      lines.push(`${key}: ${value}`);
+    }
+  }
+  lines.push("---");
+  lines.push("");
+  lines.push(body.trim());
+
+  writeFileSync(filePath, lines.join("\n"), "utf-8");
+
+  let updatedTools = agent.allowed_tools;
+  if (input.allowed_tools !== undefined) {
+    updatedTools =
+      input.allowed_tools.length > 0 ? input.allowed_tools : undefined;
+  }
+
+  return {
+    ...agent,
+    allowed_tools: updatedTools,
+  };
+}
+
+// Get project root directory (parent of team-server/)
+function getProjectRoot(): string {
+  return process.env.PROJECT_PATH || join(process.cwd(), "..");
+}
+
+// Generate a system prompt using the team-app-assistant agent via Claude CLI
+export async function generateSystemPrompt(
+  name: string,
+  description: string,
+  model: string
+): Promise<string> {
+  const projectRoot = getProjectRoot();
+
+  const prompt = `Create a new agent with the following details:
+- Name: ${name}
+- Description: ${description}
+- Model: ${model}
+
+CRITICAL: Your response must contain ONLY the system prompt markdown body (what goes after the YAML frontmatter in an agent .md file). Do NOT include:
+- Any preamble, commentary, or conversational text (e.g. "Here is...", "Perfect!", "I'll create...")
+- YAML frontmatter (no --- blocks)
+- Code fences or document labels
+- Any text that is not part of the system prompt itself
+
+Start your response directly with the first line of the system prompt (typically a # heading).`;
+
+  const proc = Bun.spawn(
+    [
+      "claude",
+      "--agent",
+      "team-app-assistant",
+      "-p",
+      prompt,
+      "--output-format",
+      "text",
+    ],
+    {
+      cwd: projectRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+
+  // Apply 120-second timeout
+  const timeout = setTimeout(() => {
+    proc.kill();
+  }, 120_000);
+
+  try {
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      throw new Error(
+        `Claude CLI exited with code ${exitCode}: ${stderr.slice(0, 500)}`
+      );
+    }
+
+    let result = stdout.trim();
+    if (!result) {
+      throw new Error("Claude CLI returned empty output");
+    }
+
+    // Strip any conversational preamble before the actual system prompt.
+    // The system prompt should start with a markdown heading (#).
+    const headingIndex = result.indexOf("\n#");
+    if (headingIndex > 0 && !result.startsWith("#")) {
+      result = result.slice(headingIndex + 1);
+    }
+
+    return result;
+  } finally {
+    clearTimeout(timeout);
+  }
 }

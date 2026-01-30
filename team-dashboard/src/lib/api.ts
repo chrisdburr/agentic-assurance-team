@@ -7,6 +7,7 @@ import type {
   MessageFilter,
   MonitoringData,
   RosterEntry,
+  UpdateAgentInput,
 } from "@/types";
 
 // Proxied through /api/backend/* route handler which injects user identity
@@ -352,6 +353,48 @@ export async function fetchAgent(id: string): Promise<Agent> {
   return data.agent;
 }
 
+// Generate a system prompt for a new agent using AI
+export async function generateSystemPrompt(input: {
+  name?: string;
+  description: string;
+  model?: string;
+}): Promise<{ system_prompt: string }> {
+  const res = await fetch(`${API_BASE}/agents/generate-prompt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to generate system prompt" }));
+    throw new Error(error.error || "Failed to generate system prompt");
+  }
+  return res.json();
+}
+
+// Upload an avatar image for an agent
+export async function uploadAvatar(
+  name: string,
+  file: File
+): Promise<{ success: boolean; url: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("name", name);
+
+  const res = await fetch("/api/avatars/upload", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to upload avatar" }));
+    throw new Error(error.error || "Failed to upload avatar");
+  }
+  return res.json();
+}
+
 // Create a new agent
 export async function createAgentApi(
   input: CreateAgentInput
@@ -366,6 +409,41 @@ export async function createAgentApi(
       .json()
       .catch(() => ({ error: "Failed to create agent" }));
     throw new Error(error.error || "Failed to create agent");
+  }
+  return res.json();
+}
+
+// Update an agent (e.g. allowed tools)
+export async function updateAgentApi(
+  id: string,
+  input: UpdateAgentInput
+): Promise<{ success: boolean; agent: Agent }> {
+  const res = await fetch(`${API_BASE}/agents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to update agent" }));
+    throw new Error(error.error || "Failed to update agent");
+  }
+  return res.json();
+}
+
+// Delete an agent
+export async function deleteAgentApi(
+  id: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/agents/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ error: "Failed to delete agent" }));
+    throw new Error(error.error || "Failed to delete agent");
   }
   return res.json();
 }

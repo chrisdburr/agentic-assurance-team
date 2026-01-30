@@ -54,6 +54,7 @@ export type WSEventType =
   | "agent_session_ended"
   | "agent_trigger_failed"
   | "dispatcher_status"
+  | "session_refreshed"
   | "connected"
   | "error";
 
@@ -101,7 +102,8 @@ export interface Agent {
   description: string;
   model: string;
   system_prompt: string;
-  is_team_agent: boolean;
+  is_system: boolean;
+  owner: string | null;
   allowed_tools?: string[];
 }
 
@@ -136,4 +138,9 @@ export interface CreateUserInput {
 export interface UpdateUserInput {
   email?: string;
   is_admin?: boolean;
+}
+
+// Input for updating an agent
+export interface UpdateAgentInput {
+  allowed_tools?: string[];
 }
