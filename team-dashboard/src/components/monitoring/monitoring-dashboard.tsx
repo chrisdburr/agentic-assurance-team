@@ -1,16 +1,16 @@
 "use client";
 
+import { Clock, Power, PowerOff, RefreshCw, Timer } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, Power, PowerOff, Clock, Timer } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useWebSocket } from "@/hooks/use-websocket";
+import { fetchMonitoringData } from "@/lib/api";
+import type { MonitoringData } from "@/types";
 import { AgentCard } from "./agent-card";
 import { EventsLog } from "./events-log";
-import { fetchMonitoringData } from "@/lib/api";
-import { useWebSocket } from "@/hooks/use-websocket";
-import type { MonitoringData } from "@/types";
 
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -29,7 +29,9 @@ export function MonitoringDashboard() {
       setData(result);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load monitoring data");
+      setError(
+        e instanceof Error ? e.message : "Failed to load monitoring data"
+      );
     } finally {
       setLoading(false);
     }
@@ -45,7 +47,8 @@ export function MonitoringDashboard() {
     if (
       lastMessage?.type === "agent_triggered" ||
       lastMessage?.type === "agent_session_ended" ||
-      lastMessage?.type === "agent_trigger_failed"
+      lastMessage?.type === "agent_trigger_failed" ||
+      lastMessage?.type === "session_refreshed"
     ) {
       loadData();
     }
@@ -64,14 +67,14 @@ export function MonitoringDashboard() {
 
   if (loading) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="space-y-6 overflow-y-auto p-6">
         <div className="flex items-center justify-between">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-10 w-24" />
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-64" />
+            <Skeleton className="h-64" key={i} />
           ))}
         </div>
       </div>
@@ -84,7 +87,7 @@ export function MonitoringDashboard() {
         <Card className="border-red-500/50">
           <CardContent className="pt-6">
             <p className="text-red-500">{error}</p>
-            <Button onClick={loadData} className="mt-4">
+            <Button className="mt-4" onClick={loadData}>
               Retry
             </Button>
           </CardContent>
@@ -98,16 +101,16 @@ export function MonitoringDashboard() {
   const agents = Object.entries(data.agents);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6 overflow-y-auto p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Agent Monitoring</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="font-semibold text-2xl">Agent Monitoring</h1>
+          <p className="text-muted-foreground text-sm">
             Monitor agent health, status, and trigger sessions manually
           </p>
         </div>
-        <Button onClick={loadData} variant="outline" size="icon">
+        <Button onClick={loadData} size="icon" variant="outline">
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
@@ -119,12 +122,12 @@ export function MonitoringDashboard() {
             <CardTitle className="text-base">Dispatcher Status</CardTitle>
             {data.enabled ? (
               <Badge className="bg-green-500">
-                <Power className="h-3 w-3 mr-1" />
+                <Power className="mr-1 h-3 w-3" />
                 Enabled
               </Badge>
             ) : (
               <Badge variant="secondary">
-                <PowerOff className="h-3 w-3 mr-1" />
+                <PowerOff className="mr-1 h-3 w-3" />
                 Disabled
               </Badge>
             )}
@@ -155,12 +158,12 @@ export function MonitoringDashboard() {
       </Card>
 
       {/* Agent Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         {agents.map(([agentId, agentData]) => (
           <AgentCard
-            key={agentId}
             agentId={agentId}
             data={agentData}
+            key={agentId}
             onTrigger={loadData}
           />
         ))}

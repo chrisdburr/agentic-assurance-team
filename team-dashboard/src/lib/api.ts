@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentStatus,
+  AggregatedEventsResult,
   ChannelMessage,
   CreateAgentInput,
   Message,
@@ -12,6 +13,32 @@ import type {
 
 // Proxied through /api/backend/* route handler which injects user identity
 const API_BASE = "/api/backend";
+
+// Fetch aggregated events across all agents
+export async function fetchEvents(params?: {
+  limit?: number;
+  event_types?: string[];
+  since?: string;
+}): Promise<AggregatedEventsResult> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) {
+    searchParams.set("limit", String(params.limit));
+  }
+  if (params?.event_types?.length) {
+    searchParams.set("event_types", params.event_types.join(","));
+  }
+  if (params?.since) {
+    searchParams.set("since", params.since);
+  }
+
+  const qs = searchParams.toString();
+  const url = `${API_BASE}/events${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error("Failed to fetch events");
+  }
+  return res.json();
+}
 
 // Fetch messages with optional filters (for DMs)
 export async function fetchMessages(

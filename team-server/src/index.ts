@@ -70,6 +70,7 @@ import {
 } from "./dispatcher.js";
 import { logger } from "./logger.js";
 import {
+  getRecentEventsAcrossAgents,
   listAgentSessions,
   readAgentSession,
   searchAgentSessions,
@@ -707,6 +708,20 @@ function runHttpServer() {
       pending_agents: queue.pendingAgents,
       started_at: queue.startedAt,
     });
+  });
+
+  // Cross-agent events feed (for monitoring dashboard)
+  app.get("/api/events", (c) => {
+    const limit = Math.min(
+      Number.parseInt(c.req.query("limit") || "50", 10),
+      200
+    );
+    const eventTypesParam = c.req.query("event_types");
+    const eventTypes = eventTypesParam ? eventTypesParam.split(",") : undefined;
+    const since = c.req.query("since") || undefined;
+
+    const result = getRecentEventsAcrossAgents(limit, eventTypes, since);
+    return c.json(result);
   });
 
   // Session Logs API Routes (for dashboard access to agent conversation history)

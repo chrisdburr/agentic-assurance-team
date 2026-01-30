@@ -59,6 +59,13 @@ export interface SearchResult {
   results: SearchMatch[];
 }
 
+/** Result from cross-agent event aggregation */
+export interface AggregatedEventsResult {
+  events: SessionEvent[];
+  total: number;
+  agents: string[];
+}
+
 /**
  * Get the sessions directory for an agent
  */
@@ -273,5 +280,76 @@ export function searchAgentSessions(
     query,
     total_matches: matches.length,
     results: matches,
+  };
+}
+
+/**
+ * Get recent events across all agents.
+ * Discovers agent directories, reads the 3 most recent session files per agent,
+ * merges events, applies optional filters, and returns sorted by timestamp desc.
+ */
+export function getRecentEventsAcrossAgents(
+  limit = 50,
+  eventTypes?: string[],
+  since?: string
+): AggregatedEventsResult {
+  if (!existsSync(LOGS_DIR)) {
+    return { events: [], total: 0, agents: [] };
+  }
+
+  const agentDirs = readdirSync(LOGS_DIR).filter((d) => {
+    // Skip "unknown" directory — these are non-agent CLI sessions
+    if (d === "unknown") return false;
+    const sessionsPath = resolve(LOGS_DIR, d, "sessions");
+    return existsSync(sessionsPath);
+  });
+
+  const allEvents: SessionEvent[] = [];
+  const sinceTime = since ? new Date(since).getTime() : 0;
+  const maxFilesPerAgent = 3;
+
+  for (const agentId of agentDirs) {
+    const sessionsDir = resolve(LOGS_DIR, agentId, "sessions");
+    const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
+
+    // Sort by modification time, most recent first
+    const fileStats = files.map((f) => {
+      const fullPath = resolve(sessionsDir, f);
+      const stat = statSync(fullPath);
+      return { file: f, mtime: stat.mtimeMs, path: fullPath };
+    });
+    fileStats.sort((a, b) => b.mtime - a.mtime);
+
+    for (const { path } of fileStats.slice(0, maxFilesPerAgent)) {
+      const events = parseJsonlFile(path);
+      for (const event of events) {
+        // Filter by timestamp if since is specified
+        if (sinceTime > 0 && new Date(event.timestamp).getTime() <= sinceTime) {
+          continue;
+        }
+
+        // Filter by event type if specified
+        if (
+          eventTypes &&
+          eventTypes.length > 0 &&
+          !eventTypes.includes(event.event)
+        ) {
+          continue;
+        }
+
+        allEvents.push(event);
+      }
+    }
+  }
+
+  // Sort by timestamp descending (most recent first)
+  allEvents.sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  return {
+    events: allEvents.slice(0, limit),
+    total: allEvents.length,
+    agents: agentDirs,
   };
 }

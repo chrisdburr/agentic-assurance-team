@@ -144,3 +144,24 @@ export interface UpdateUserInput {
 export interface UpdateAgentInput {
   allowed_tools?: string[];
 }
+
+// Session event from agent conversation logs
+export interface SessionEvent {
+  timestamp: string;
+  event: string;
+  agent: string;
+  session_id: string;
+  prompt?: string;
+  tool_name?: string;
+  tool_input?: string;
+  tool_response?: string;
+  error?: string;
+  subagent_id?: string;
+}
+
+// Result from cross-agent event aggregation API
+export interface AggregatedEventsResult {
+  events: SessionEvent[];
+  total: number;
+  agents: string[];
+}
