@@ -34,6 +34,7 @@ import {
   createUser,
   deleteChannel,
   deleteUser,
+  getAllChannels,
   getAllMessages,
   getAllUsers,
   getChannelById,
@@ -1269,6 +1270,13 @@ function runHttpServer() {
         allowed_tools: body.allowed_tools,
       });
 
+      // Add the new agent to all existing channels
+      if (agent.dispatchable) {
+        for (const ch of getAllChannels()) {
+          addChannelMember(ch.id, "agent", agent.id, "member");
+        }
+      }
+
       broadcast("agent_created", { agent });
 
       return c.json({ success: true, agent }, 201);
@@ -1341,6 +1349,11 @@ function runHttpServer() {
         status = 403;
       }
       return c.json({ error: result.error }, status);
+    }
+
+    // Remove the agent from all channels
+    for (const ch of getAllChannels()) {
+      removeChannelMember(ch.id, "agent", id);
     }
 
     broadcast("agent_deleted", { id });

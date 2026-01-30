@@ -38,6 +38,7 @@ const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 const ARRAY_ITEM_REGEX = /^\s+-\s+/;
 const KEY_VALUE_REGEX = /^(\w+):\s*(.*)$/;
 const AGENT_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
+const SHORT_ROLE_SPLIT_REGEX = /[.,;]/;
 
 // Get project root - agents are stored in PROJECT_PATH/.claude/agents/
 // When running from team-server/, cwd is team-server so we go up one level
@@ -47,6 +48,14 @@ function getAgentsDir(): string {
   }
   // Default: assume we're in team-server/ subdirectory, go up to project root
   return join(process.cwd(), "..", ".claude", "agents");
+}
+
+// Get identity files directory: PROJECT_PATH/.agents/identities/
+function getIdentitiesDir(): string {
+  if (process.env.PROJECT_PATH) {
+    return join(process.env.PROJECT_PATH, ".agents", "identities");
+  }
+  return join(process.cwd(), "..", ".agents", "identities");
 }
 
 // Parse YAML frontmatter from markdown file content
@@ -286,6 +295,22 @@ export function createAgent(input: CreateAgentInput): Agent {
 
   writeFileSync(filePath, content, "utf-8");
 
+  // Write skeleton identity file synchronously
+  const identitiesDir = getIdentitiesDir();
+  if (!existsSync(identitiesDir)) {
+    mkdirSync(identitiesDir, { recursive: true });
+  }
+  const identityPath = join(identitiesDir, `${input.name}.md`);
+  const skeleton = generateSkeletonIdentity(
+    input.name,
+    input.description,
+    input.system_prompt
+  );
+  writeFileSync(identityPath, skeleton, "utf-8");
+
+  // Kick off async enrichment (fire-and-forget)
+  enrichIdentityFileAsync(input.name, input.description, input.system_prompt);
+
   // Invalidate dispatchable cache when a new agent is created
   dispatchableCache = null;
 
@@ -328,6 +353,13 @@ export function deleteAgent(
 
   try {
     unlinkSync(filePath);
+
+    // Also delete identity file if it exists
+    const identityPath = join(getIdentitiesDir(), `${id}.md`);
+    if (existsSync(identityPath)) {
+      unlinkSync(identityPath);
+    }
+
     // Invalidate dispatchable cache when an agent is deleted
     dispatchableCache = null;
     return { success: true };
@@ -407,6 +439,118 @@ export function updateAgent(
     ...agent,
     allowed_tools: updatedTools,
   };
+}
+
+/**
+ * Generate a minimal skeleton identity file from agent metadata.
+ * Uses the template structure from .claude/skills/agent-creation/identity-template.md.
+ */
+function generateSkeletonIdentity(
+  name: string,
+  description: string,
+  _systemPrompt: string
+): string {
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+  // Extract a short role from the description (first clause or sentence)
+  const shortRole = description.split(SHORT_ROLE_SPLIT_REGEX)[0].trim();
+
+  return `# ${displayName} - ${shortRole}
+
+## Role
+${description}
+
+## Expertise
+Derived from system prompt — see \`.claude/agents/${name}.md\` for full details.
+
+## Responsibilities
+- Contribute domain expertise to team discussions
+- Respond to @mentions and direct messages from teammates
+- Collaborate with other agents on cross-functional tasks
+- Maintain shared terminology per \`.agents/shared/ontology.yaml\`
+
+## Personality
+- Professional and collaborative
+- Clear and direct in communication
+- Willing to acknowledge uncertainty
+
+## Communication Style
+- Structures responses clearly
+- Supports claims with evidence or reasoning
+- Adapts communication to the audience
+
+## Key Phrases
+- "Let me look into that..."
+- "Based on my analysis..."
+- "I'd suggest we consider..."
+`;
+}
+
+/**
+ * Fire-and-forget: spawns the team-app-assistant agent to produce a richer
+ * identity file, overwriting the skeleton if successful.
+ */
+function enrichIdentityFileAsync(
+  name: string,
+  description: string,
+  _systemPrompt: string
+): void {
+  const projectRoot = getProjectRoot();
+  const identitiesDir = getIdentitiesDir();
+  const identityPath = join(identitiesDir, `${name}.md`);
+
+  const prompt = `Generate a rich identity file for a new team agent with the following details:
+- Name: ${name}
+- Description: ${description}
+
+The identity file should follow the template in .claude/skills/agent-creation/identity-template.md exactly.
+Look at existing identity files in .agents/identities/ for examples of the expected format and depth.
+
+CRITICAL: Your response must contain ONLY the identity file markdown content. No preamble, no code fences, no commentary.
+Start directly with "# ${name.charAt(0).toUpperCase() + name.slice(1)} - " heading.`;
+
+  const proc = Bun.spawn(
+    [
+      "claude",
+      "--agent",
+      "team-app-assistant",
+      "-p",
+      prompt,
+      "--output-format",
+      "text",
+    ],
+    {
+      cwd: projectRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+
+  // Fire-and-forget with timeout — overwrite skeleton on success
+  const timeout = setTimeout(() => {
+    proc.kill();
+  }, 120_000);
+
+  (async () => {
+    try {
+      const stdout = await new Response(proc.stdout).text();
+      const exitCode = await proc.exited;
+
+      if (exitCode === 0 && stdout.trim()) {
+        let result = stdout.trim();
+        // Strip any preamble before the heading
+        const headingIndex = result.indexOf("\n#");
+        if (headingIndex > 0 && !result.startsWith("#")) {
+          result = result.slice(headingIndex + 1);
+        }
+        writeFileSync(identityPath, result, "utf-8");
+        console.log(`[Agents] Enriched identity file for ${name}`);
+      }
+    } catch (error) {
+      console.error(`[Agents] Failed to enrich identity for ${name}:`, error);
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
 }
 
 // Get project root directory (parent of team-server/)

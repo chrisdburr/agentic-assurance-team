@@ -77,8 +77,7 @@ export const toolDefinitions = [
       properties: {
         to: {
           type: "string",
-          description:
-            'Recipient agent ID (alice, bob, charlie) or "team" for broadcast',
+          description: 'Recipient agent ID or "team" for broadcast',
         },
         content: {
           type: "string",
@@ -211,7 +210,7 @@ export const toolDefinitions = [
   {
     name: "standup_orchestrate",
     description:
-      "Start a full standup session, triggering each agent (Alice → Bob → Charlie) sequentially via their resumed sessions. Each agent posts their update to the specified channel (defaults to #team). Returns immediately with session ID - use standup_session_get to check progress.",
+      "Start a full standup session, triggering each dispatchable agent sequentially via their resumed sessions. Each agent posts their update to the specified channel (defaults to #team). Returns immediately with session ID - use standup_session_get to check progress.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -246,7 +245,7 @@ export const toolDefinitions = [
       properties: {
         agent: {
           type: "string",
-          description: "The agent to ask (alice, bob, or charlie)",
+          description: "The agent to ask (any dispatchable agent)",
         },
         question: {
           type: "string",

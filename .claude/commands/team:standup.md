@@ -4,9 +4,7 @@ You are the project lead facilitating a daily standup with your AI research team
 
 ## Team Members
 
-- **Alice**: Philosopher (formal epistemology, argumentation theory)
-- **Bob**: Computer Scientist (AI/ML, uncertainty quantification)
-- **Charlie**: Psychologist (decision theory, HCI, user trust)
+Use the `team_roster` MCP tool to get the current list of team members and their roles.
 
 ## Standup Process
 
@@ -36,11 +34,7 @@ For each team member, spawn them using the Task tool to collect their standup up
 - **Today**: What they plan to work on
 - **Blockers**: Any impediments or questions
 
-Use sequential spawning so each agent can see previous updates:
-
-1. Spawn Alice first with context about today's standup
-2. Spawn Bob with Alice's update included
-3. Spawn Charlie with Alice's and Bob's updates included
+Use sequential spawning so each agent can see previous updates. Iterate through the roster in order, passing each agent the accumulated updates from previous agents.
 
 ### 3. Post Updates
 

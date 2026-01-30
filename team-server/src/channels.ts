@@ -98,19 +98,28 @@ export function isValidChannel(channel: string): boolean {
 }
 
 /**
- * Parse @mentions from message content
+ * Parse @mentions from message content.
+ * Dynamically builds the regex from dispatchable agent IDs so that
+ * newly-created agents are recognised without code changes.
  */
 export function parseMentions(content: string): string[] {
-  const mentionRegex = /@(alice|bob|charlie|team)\b/gi;
+  const { getDispatchableAgentIds } =
+    require("./agents.js") as typeof import("./agents.js");
+  const dispatchable = getDispatchableAgentIds();
+  const pattern =
+    dispatchable.length > 0
+      ? `@(${dispatchable.join("|")}|team)\\b`
+      : "@(team)\\b";
+  const mentionRegex = new RegExp(pattern, "gi");
   const matches = content.match(mentionRegex) || [];
 
   const mentions = new Set<string>();
   for (const match of matches) {
     const mention = match.slice(1).toLowerCase();
     if (mention === "team") {
-      mentions.add("alice");
-      mentions.add("bob");
-      mentions.add("charlie");
+      for (const id of dispatchable) {
+        mentions.add(id);
+      }
     } else {
       mentions.add(mention);
     }

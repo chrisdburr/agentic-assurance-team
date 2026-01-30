@@ -8,6 +8,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const DB_PATH = process.env.DB_PATH || resolve(PROJECT_ROOT, ".agents/team.db");
 
+const SHORT_ROLE_SPLIT_REGEX = /[.,;]/;
+
 const db = new Database(DB_PATH, { create: true });
 db.exec("PRAGMA journal_mode = WAL");
 
@@ -453,28 +455,18 @@ export function getAgentStatus(agentId: string): Status | undefined {
   return selectAgentStatus.get({ $agentId: agentId }) as Status | undefined;
 }
 
-// Team roster (static for now)
+// Team roster — dynamically built from dispatchable agents
 export function getTeamRoster(): TeamMember[] {
-  return [
-    {
-      id: "alice",
-      name: "Alice",
-      role: "Philosopher",
-      expertise: "Formal epistemology, argumentation theory",
-    },
-    {
-      id: "bob",
-      name: "Bob",
-      role: "Computer Scientist",
-      expertise: "AI/ML, uncertainty quantification",
-    },
-    {
-      id: "charlie",
-      name: "Charlie",
-      role: "Psychologist",
-      expertise: "Decision theory, HCI, user trust",
-    },
-  ];
+  // Lazy import to avoid potential circular init issues at module load time.
+  const { listAgents } = require("./agents.js") as typeof import("./agents.js");
+  return listAgents()
+    .filter((a) => a.dispatchable)
+    .map((a) => ({
+      id: a.id,
+      name: a.name.charAt(0).toUpperCase() + a.name.slice(1),
+      role: a.description.split(SHORT_ROLE_SPLIT_REGEX)[0].trim(),
+      expertise: a.description,
+    }));
 }
 
 // User functions
