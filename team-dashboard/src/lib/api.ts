@@ -99,7 +99,7 @@ export async function fetchDMMessages(agent: string): Promise<Message[]> {
   // - Messages FROM user TO agent
   // - Messages FROM agent TO user (or to the user's actual username)
   const userToAgent = toAgent.filter((m) => m.from_agent === "user");
-  const agentToUser = fromAgent.filter((m) => m.to_agent !== agent);
+  const agentToUser = fromAgent.filter((m) => m.to_agent === "user");
 
   // Merge and sort by timestamp
   const all = [...userToAgent, ...agentToUser];

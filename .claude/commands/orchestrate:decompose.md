@@ -97,8 +97,8 @@ For each subtask with no unresolved dependencies:
      New task assigned: <title> (<issue-id>)
      Context: <1-sentence summary of what to do>
      Run `/plan-issue <issue-id>` to review and start.
-     Post your results to #<originating-channel> (the channel this epic was created from).
-     When complete, close the issue with `bd close <issue-id>` and message me back.
+     Post your results directly to #<originating-channel> using channel_write.
+     When complete, close the issue with `bd close <issue-id>` and DM me a short confirmation (e.g. "Done — posted to #<channel>"). Do NOT include your full work output in the DM.
      ```
 
 2. **Post a dispatch summary** to the channel using `channel_write`:

@@ -51,14 +51,14 @@ Check if any issues have become **newly ready** (all blockers closed, issue stil
 
 For each newly ready issue:
 
-1. **DM the assigned agent** using `message_send` with metadata `{"reply_to_channel": "general"}`:
+1. **DM the assigned agent** using `message_send` (determine the originating channel from the epic's context or the channel where the decomposition was triggered):
    - To: `<agent>`
    - Content:
      ```
      Dependency resolved — you can now start: <title> (<issue-id>)
      Run `/plan-issue <issue-id>` to review and begin.
-     Post your work output to #general using channel_write for team visibility.
-     When complete, close the issue with `bd close <issue-id>` and message me back.
+     Post your work output directly to #<channel> using channel_write.
+     When complete, close the issue with `bd close <issue-id>` and DM me a short confirmation. Do NOT include your full work output in the DM.
      ```
 
 2. **Post to the channel** using `channel_write`:

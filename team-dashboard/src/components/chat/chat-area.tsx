@@ -459,11 +459,17 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
                   />
                 </div>
               ))}
-              {activeAgents.length > 0 && (
-                <div className="mt-6">
-                  <TypingIndicator agents={activeAgents} />
-                </div>
-              )}
+              {(() => {
+                // Scope typing indicator to current conversation
+                const relevantAgents = agent
+                  ? activeAgents.filter((a) => a === agent) // DM: only show this agent
+                  : activeAgents; // Channel: show all active agents
+                return relevantAgents.length > 0 ? (
+                  <div className="mt-6">
+                    <TypingIndicator agents={relevantAgents} />
+                  </div>
+                ) : null;
+              })()}
             </>
           )}
         </ScrollArea>
