@@ -12,11 +12,13 @@ import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
 import { getDispatchableAgentIds, isDispatchableAgent } from "./agents.js";
 import {
+  clearDispatchChannel,
   deleteAgentSessions,
   getAgentSession,
   getUnreadMessages,
   type Message,
   postStandup,
+  setDispatchChannel,
 } from "./db.js";
 import { logger } from "./logger.js";
 
@@ -319,6 +321,7 @@ function killStaleProcess(
   state.lastExitCode = -1;
   state.lastActiveStart = null;
   state.lastOutputTime = null;
+  clearDispatchChannel(agent);
 
   // Clear orchestrator concurrency guard if applicable
   if (agent === "orchestrator") {
@@ -477,6 +480,7 @@ function triggerAgent(
     if (agent === "orchestrator") {
       // Extract channel routing from message metadata (same as non-orchestrator path)
       const channel = extractChannelRouting(messages) || "general";
+      setDispatchChannel(agent, channel);
 
       prompt =
         header +
@@ -496,6 +500,7 @@ function triggerAgent(
     } else {
       // Extract channel routing from message metadata (Layer 1)
       const channelRouting = extractChannelRouting(messages);
+      setDispatchChannel(agent, channelRouting);
 
       prompt =
         header +
@@ -524,6 +529,7 @@ function triggerAgent(
       state.lastExitCode = exitCode;
       state.lastActiveStart = null;
       state.lastOutputTime = null;
+      clearDispatchChannel(agent);
 
       logger.info("Dispatcher", `${agent} session ended`, { exitCode });
 
@@ -541,6 +547,7 @@ function triggerAgent(
       error: error instanceof Error ? error.message : String(error),
     });
     state.activeProcess = null;
+    clearDispatchChannel(agent);
 
     if (broadcast) {
       broadcast("agent_trigger_failed", {
@@ -861,6 +868,7 @@ export function refreshAgentSession(
   // Reset agent state so it picks up new messages cleanly
   state.lastExitCode = null;
   state.lastSeenMessageTime = "";
+  clearDispatchChannel(agent);
 
   logger.info("Dispatcher", `Refreshed ${agent} session`, {
     oldSessionId,
@@ -957,6 +965,7 @@ export function triggerAgentForChannel(
 3. Call channel_write with channel="${channel}" and your response to participate in the discussion
 Remember: Use channel_write to respond in the channel, NOT message_send (that's for DMs).`;
 
+    setDispatchChannel(agent, channel);
     spawnClaudeSession(agent, sessionId, prompt, (exitCode) => {
       if (state.activeProcess === null) {
         return; // Watchdog already cleaned up
@@ -966,6 +975,7 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
       state.lastActiveStart = null;
       state.lastOutputTime = null;
 
+      clearDispatchChannel(agent);
       logger.info("Dispatcher", `${agent} channel session ended`, {
         exitCode,
       });
@@ -988,6 +998,7 @@ Remember: Use channel_write to respond in the channel, NOT message_send (that's 
     });
     state.activeProcess = null;
     state.lastActiveStart = null;
+    clearDispatchChannel(agent);
 
     if (broadcast) {
       broadcast("agent_trigger_failed", {
@@ -1103,6 +1114,7 @@ function triggerAgentForStandup(
   state.lastActiveStart = Date.now();
   state.lastOutputTime = Date.now();
   state.triggerCount++;
+  setDispatchChannel(agent, channel);
 
   if (broadcast) {
     broadcast("agent_triggered", {
@@ -1139,6 +1151,7 @@ function triggerAgentForStandup(
       state.lastActiveStart = null;
       state.lastOutputTime = null;
 
+      clearDispatchChannel(agent);
       logger.info("Dispatcher", `${agent} standup session ended`, {
         exitCode,
       });
@@ -1160,6 +1173,7 @@ function triggerAgentForStandup(
     });
     state.activeProcess = null;
     state.lastActiveStart = null;
+    clearDispatchChannel(agent);
 
     if (broadcast) {
       broadcast("agent_trigger_failed", {
@@ -1299,6 +1313,8 @@ export function triggerOrchestrator(
     startedAt: new Date().toISOString(),
   };
 
+  setDispatchChannel("orchestrator", params.channel);
+
   // Initialize watchdog state for orchestrator
   const orchState = ensureAgentState("orchestrator");
   orchState.lastActiveStart = Date.now();
@@ -1335,6 +1351,7 @@ export function triggerOrchestrator(
         orchState.lastExitCode = exitCode;
         orchState.lastActiveStart = null;
         orchState.lastOutputTime = null;
+        clearDispatchChannel("orchestrator");
 
         logger.info("Dispatcher", `Orchestrator ${command} session ended`, {
           sessionId,
@@ -1380,6 +1397,7 @@ export function triggerOrchestrator(
     orchState.activeProcess = null;
     orchState.lastExitCode = -1;
     orchState.lastActiveStart = null;
+    clearDispatchChannel("orchestrator");
 
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error("Dispatcher", `Failed to start orchestrator ${command}`, {

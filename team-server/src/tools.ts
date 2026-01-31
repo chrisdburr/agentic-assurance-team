@@ -12,6 +12,7 @@ import {
 } from "./channels.js";
 import {
   getAgentSession,
+  getAgentStatus,
   getStandupsBySession,
   getTeamRoster,
   getTeamStatus,
@@ -396,7 +397,26 @@ export async function handleToolCall(
         thread_id?: string;
         metadata?: Record<string, unknown>;
       };
-      const messageId = sendMessage(agentId, to, content, thread_id, metadata);
+
+      // Auto-inject reply_to_channel from dispatch_channel if agent didn't provide it
+      let effectiveMetadata = metadata;
+      if (!metadata?.reply_to_channel) {
+        const status = getAgentStatus(agentId);
+        if (status?.dispatch_channel) {
+          effectiveMetadata = {
+            ...metadata,
+            reply_to_channel: status.dispatch_channel,
+          };
+        }
+      }
+
+      const messageId = sendMessage(
+        agentId,
+        to,
+        content,
+        thread_id,
+        effectiveMetadata
+      );
       const result = {
         success: true,
         message_id: messageId,

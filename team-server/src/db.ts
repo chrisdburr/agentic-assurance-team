@@ -112,6 +112,13 @@ try {
   // Column already exists, ignore error
 }
 
+// Migration: Add dispatch_channel column to status table
+try {
+  db.exec("ALTER TABLE status ADD COLUMN dispatch_channel TEXT DEFAULT NULL");
+} catch {
+  // Column already exists, ignore error
+}
+
 // Prepared statements
 const insertMessage = db.prepare(
   `INSERT INTO messages (id, from_agent, to_agent, content, thread_id, timestamp, read_by, metadata)
@@ -185,6 +192,16 @@ const selectAllStatus = db.prepare(
 
 const selectAgentStatus = db.prepare(
   "SELECT * FROM status WHERE agent_id = $agentId"
+);
+
+const updateDispatchChannel = db.prepare(
+  `UPDATE status SET dispatch_channel = $dispatchChannel, updated_at = $updatedAt
+   WHERE agent_id = $agentId`
+);
+
+const insertStatusForDispatch = db.prepare(
+  `INSERT OR IGNORE INTO status (agent_id, status, dispatch_channel, updated_at)
+   VALUES ($agentId, 'offline', $dispatchChannel, $updatedAt)`
 );
 
 // User prepared statements
@@ -462,6 +479,36 @@ export function getTeamStatus(): Status[] {
 
 export function getAgentStatus(agentId: string): Status | undefined {
   return selectAgentStatus.get({ $agentId: agentId }) as Status | undefined;
+}
+
+/**
+ * Set the dispatch_channel for an agent.
+ * Creates a status row if one doesn't exist yet.
+ */
+export function setDispatchChannel(
+  agentId: string,
+  channel: string | null
+): void {
+  const updatedAt = new Date().toISOString();
+  // Ensure the row exists first (INSERT OR IGNORE)
+  insertStatusForDispatch.run({
+    $agentId: agentId,
+    $dispatchChannel: channel,
+    $updatedAt: updatedAt,
+  });
+  // Then update
+  updateDispatchChannel.run({
+    $agentId: agentId,
+    $dispatchChannel: channel,
+    $updatedAt: updatedAt,
+  });
+}
+
+/**
+ * Clear the dispatch_channel for an agent (set to NULL).
+ */
+export function clearDispatchChannel(agentId: string): void {
+  setDispatchChannel(agentId, null);
 }
 
 // Team roster — dynamically built from dispatchable agents
@@ -930,6 +977,7 @@ export interface Status {
   status: string;
   working_on: string | null;
   beads_id: string | null;
+  dispatch_channel: string | null;
   updated_at: string;
 }
 
