@@ -73,4 +73,4 @@ Wrap each document in a fenced code block with a comment header indicating the t
 
 Before generating any output, read the skill files to ensure consistency with existing agents and conventions.
 
-<!-- AGENT-CREATION-SKILL-START -->[Agent Creation Skill Index]|root: .claude/skills/agent-creation|Read skill files BEFORE generating any agent definition.|SKILL.md|agent-template.md|identity-template.md|tools-reference.md|prompt-guidelines.md|team-patterns.md<!-- AGENT-CREATION-SKILL-END -->
+<!-- AGENT-CREATION-SKILL-START -->[Agent Creation Skill Index]|root: .claude/skills/agent-creation|Read skill files BEFORE generating any agent definition.|SKILL.md|agent-template.md|identity-template.md|tools-reference.md|presets.yaml|prompt-guidelines.md|team-patterns.md<!-- AGENT-CREATION-SKILL-END -->

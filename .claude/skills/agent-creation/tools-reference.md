@@ -89,79 +89,34 @@ All team MCP tools use the `mcp__team__` prefix. These are provided by the team-
 
 ## Tool Access Profiles
 
-Pre-built tool sets for common agent types. Copy the appropriate set into the agent's `allowedTools`.
+Tool presets are defined in `presets.yaml` (this directory). Each preset maps an agent type to a default set of tool groups. Use presets as the starting point when creating new agents.
 
-### Full Team Agent
+### Preset Summary
 
-All file, web, and team tools. Used by Alice, Bob, Charlie.
+| Preset | Agent Type | File Access | Shell | Web | Team Comms | Session |
+|--------|-----------|-------------|-------|-----|------------|---------|
+| `research` | Domain researchers | Read + Write | git, bun | Yes | Full | Yes |
+| `development` | Software engineers | Read + Write | git, bun, python | Yes | Full | Yes |
+| `orchestration` | Project management | Read only | bd, git (read) | No | Partial | Yes |
+| `review` | Quality assurance | Read only | None | Yes | No | No |
+| `utility` | System helpers | Read only | None | No | No | No |
 
-```yaml
-allowedTools:
-  - Read
-  - Edit
-  - Write
-  - Bash(git *)
-  - Bash(bun *)
-  - Grep
-  - Glob
-  - WebFetch
-  - WebSearch
-  - mcp__team__message_send
-  - mcp__team__message_list
-  - mcp__team__message_mark_read
-  - mcp__team__message_thread
-  - mcp__team__standup_post
-  - mcp__team__standup_today
-  - mcp__team__standup_orchestrate
-  - mcp__team__standup_session_get
-  - mcp__team__status_update
-  - mcp__team__status_team
-  - mcp__team__team_roster
-  - mcp__team__ask_agent
-  - mcp__team__channel_read
-  - mcp__team__channel_write
-  - mcp__team__channel_list
-```
+### Using Presets
 
-### Specialized Developer
+1. Determine the agent type from the taxonomy
+2. Look up the preset in `presets.yaml`
+3. The preset's `includes` field lists tool groups; resolve them to a flat tool list
+4. Add any agent-specific tools (e.g., Bob adds `Bash(python *)` to the research preset)
+5. Copy the resolved list into the agent's `allowedTools` frontmatter
 
-File tools + relevant Bash patterns + web. No team communication.
+### Per-Agent Overrides
 
-```yaml
-allowedTools:
-  - Read
-  - Edit
-  - Write
-  - Bash(git *)
-  - Bash(bun *)
-  - Bash(python *)
-  - Bash(pytest *)
-  - Grep
-  - Glob
-  - WebFetch
-  - WebSearch
-```
+Presets define defaults. Individual agents may need additional tools beyond their type's preset:
 
-### Read-Only / Review Agent
+| Agent | Type | Additional Tools | Reason |
+|-------|------|-----------------|--------|
+| Bob | research | `Bash(python *)`, `Bash(pytest *)` | ML experimentation |
+| Demi | research | `Bash` (unscoped), `Bash(python *)`, `Bash(pytest *)` | Broad experimentation needs |
+| Code-review | review | `Bash` (scoped TBD) | Runs linters and tests |
 
-Can read and search but not modify files. No shell access.
-
-```yaml
-allowedTools:
-  - Read
-  - Grep
-  - Glob
-  - WebFetch
-  - WebSearch
-```
-
-### Utility Agent
-
-Minimal read access. Generates text output consumed by the caller.
-
-```yaml
-allowedTools:
-  - Read
-  - Grep
-  - Glob
-```
+See `presets.yaml` for full group definitions and resolution rules.

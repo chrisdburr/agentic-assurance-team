@@ -60,5 +60,6 @@ See `identity-template.md` for the canonical template.
 - `agent-template.md` — Full `.claude/agents/{name}.md` template with all sections
 - `identity-template.md` — Full `.agents/identities/{name}.md` template
 - `tools-reference.md` — Complete tool catalogue with access profiles
+- `presets.yaml` — Machine-readable tool presets by agent type
 - `prompt-guidelines.md` — System prompt writing best practices
 - `team-patterns.md` — Dispatch context, communication patterns, ontology, standups

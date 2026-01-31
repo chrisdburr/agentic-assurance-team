@@ -1,0 +1,230 @@
+# Tool Presets for Agent Creation
+# Maps agent types to default tool bundles via composable tool groups.
+# Used by the agent-creation skill to generate allowedTools frontmatter.
+#
+# Consumed by: .claude/skills/agent-creation/ workflow
+# Pattern follows: .agents/shared/ontology.yaml
+
+domain: Agent Tool Configuration
+version: "1.0"
+last_updated: "2026-01-31"
+
+# ─── Tool Groups ────────────────────────────────────────────────
+# Named bundles of related tools. Presets compose these via `includes`.
+# Each group has a description and a flat list of tool strings.
+
+tool_groups:
+
+  core_read:
+    description: "Read-only file system access. Every agent needs these."
+    tools:
+      - Read
+      - Grep
+      - Glob
+
+  core_write:
+    description: "File modification. Grants edit and create capabilities."
+    tools:
+      - Edit
+      - Write
+
+  shell_git:
+    description: "Git operations (status, add, commit, diff, log, etc.)"
+    tools:
+      - "Bash(git *)"
+
+  shell_bun:
+    description: "Bun runtime (install, run, test, build)"
+    tools:
+      - "Bash(bun *)"
+
+  shell_python:
+    description: "Python execution and testing"
+    tools:
+      - "Bash(python *)"
+      - "Bash(pytest *)"
+
+  shell_beads:
+    description: "Beads issue tracker CLI"
+    tools:
+      - "Bash(bd *)"
+
+  shell_git_readonly:
+    description: "Git read-only operations (log, status, diff). No mutations."
+    tools:
+      - "Bash(git log *)"
+      - "Bash(git status *)"
+      - "Bash(git diff *)"
+
+  web:
+    description: "Web fetch and search. For research and documentation lookup."
+    tools:
+      - WebFetch
+      - WebSearch
+
+  team_messaging:
+    description: "Direct message tools for agent-to-agent and agent-to-user communication."
+    tools:
+      - mcp__team__message_send
+      - mcp__team__message_list
+      - mcp__team__message_mark_read
+      - mcp__team__message_thread
+
+  team_channels:
+    description: "Channel-based broadcast communication."
+    tools:
+      - mcp__team__channel_read
+      - mcp__team__channel_write
+      - mcp__team__channel_list
+
+  team_status:
+    description: "Status updates and team roster."
+    tools:
+      - mcp__team__status_update
+      - mcp__team__status_team
+      - mcp__team__team_roster
+
+  team_standup:
+    description: "Standup posting and orchestration."
+    tools:
+      - mcp__team__standup_post
+      - mcp__team__standup_today
+      - mcp__team__standup_orchestrate
+      - mcp__team__standup_session_get
+
+  team_coordination:
+    description: "Synchronous agent-to-agent invocation."
+    tools:
+      - mcp__team__ask_agent
+
+  session_tools:
+    description: "Introspect past conversation sessions."
+    tools:
+      - mcp__team__session_list
+      - mcp__team__session_read
+      - mcp__team__session_search
+
+  # Composite group: all team MCP tools
+  team_full:
+    description: "All team MCP tools. Shorthand for messaging + channels + status + standup + coordination."
+    includes:
+      - team_messaging
+      - team_channels
+      - team_status
+      - team_standup
+      - team_coordination
+
+# ─── Presets ────────────────────────────────────────────────────
+# Each preset maps to an agent type from the taxonomy.
+# `includes` lists tool groups; `additional_tools` adds one-off tools.
+# The resolved allowedTools is the union of all included groups
+# plus any additional_tools.
+
+presets:
+
+  research:
+    description: "Domain research agents with full team communication and web access"
+    model: opus
+    dispatchable: true
+    includes:
+      - core_read
+      - core_write
+      - shell_git
+      - shell_bun
+      - web
+      - team_full
+      - session_tools
+    additional_tools: []
+    examples:
+      - alice
+      - bob
+      - charlie
+      - demi
+    notes: >
+      Base profile for research agents. Agents that need extra shell access
+      (e.g., Bob adds python/pytest, Demi adds unscoped Bash and python/pytest)
+      should add tools via per-agent overrides in their agent definition.
+
+  development:
+    description: "Software engineering agents for coding tasks"
+    model: sonnet
+    dispatchable: true
+    includes:
+      - core_read
+      - core_write
+      - shell_git
+      - shell_bun
+      - shell_python
+      - web
+      - team_full
+      - session_tools
+    additional_tools: []
+    examples: []
+    notes: >
+      Includes python/pytest by default. Add more shell patterns
+      (docker, npx, etc.) via per-agent additional_tools as needed.
+
+  orchestration:
+    description: "Task decomposition and project management"
+    model: sonnet
+    dispatchable: true
+    includes:
+      - core_read
+      - shell_beads
+      - shell_git_readonly
+      - team_channels
+      - team_coordination
+      - session_tools
+    additional_tools:
+      - mcp__team__message_send
+      - mcp__team__message_list
+      - mcp__team__message_mark_read
+      - mcp__team__status_team
+      - mcp__team__team_roster
+    examples:
+      - orchestrator
+    notes: >
+      Intentionally constrained: read-only file access, no file writes,
+      no standup orchestration (that is the human's prerogative).
+      Messaging is limited to send/list/mark_read (no threads).
+
+  review:
+    description: "Read-only quality assurance and code review"
+    model: opus
+    dispatchable: false
+    includes:
+      - core_read
+      - web
+    additional_tools: []
+    examples:
+      - code-review
+    notes: >
+      Read-only by design. The current code-review agent also runs
+      linters/tests via Bash; add scoped patterns like Bash(bunx *)
+      as per-agent overrides when needed.
+
+  utility:
+    description: "Minimal system agents that generate output for callers"
+    model: sonnet
+    dispatchable: false
+    includes:
+      - core_read
+    additional_tools: []
+    examples:
+      - team-app-assistant
+    notes: >
+      Absolute minimum tool access. These agents are invoked by other
+      agents or the system, not by team communication. They read
+      context and generate text output.
+
+# ─── Resolution ─────────────────────────────────────────────────
+# To resolve a preset to a flat allowedTools list:
+#
+#   1. For each group in preset.includes:
+#      - If the group has `includes`, recursively resolve those groups
+#      - If the group has `tools`, collect them
+#   2. Add preset.additional_tools
+#   3. Deduplicate
+#
+# Per-agent overrides (extra tools beyond the preset) are specified
+# in the agent's own .claude/agents/{name}.md frontmatter, not here.
