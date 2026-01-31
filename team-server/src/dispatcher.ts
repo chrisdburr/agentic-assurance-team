@@ -48,6 +48,14 @@ const COOLDOWN = Number.parseInt(
   10
 );
 const DISPATCHER_ENABLED = process.env.DISPATCHER_ENABLED !== "false";
+const WATCHDOG_INACTIVITY_MS = Number.parseInt(
+  process.env.DISPATCHER_WATCHDOG_INACTIVITY || "300000",
+  10
+);
+const MAX_SESSION_DURATION_MS = Number.parseInt(
+  process.env.DISPATCHER_MAX_SESSION_DURATION || "600000",
+  10
+);
 
 // Standup queue for sequential agent triggering
 interface StandupQueue {
@@ -66,6 +74,7 @@ interface AgentState {
   triggerCount: number;
   lastExitCode: number | null;
   lastActiveStart: number | null;
+  lastOutputTime: number | null; // Timestamp of last stdout/stderr activity
 }
 
 /**
@@ -91,6 +100,7 @@ function spawnClaudeSession(
             if (done) {
               break;
             }
+            state.lastOutputTime = Date.now();
             const text = new TextDecoder().decode(value);
             logger.debug(agent, text.trim());
           }
@@ -108,6 +118,7 @@ function spawnClaudeSession(
             if (done) {
               break;
             }
+            state.lastOutputTime = Date.now();
             const text = new TextDecoder().decode(value);
             logger.error(agent, text.trim());
           }
@@ -163,6 +174,7 @@ function spawnClaudeSession(
           if (done) {
             break;
           }
+          state.lastOutputTime = Date.now();
           const text = new TextDecoder().decode(value);
           stderrChunks.push(text);
           logger.error(agent, text.trim());
@@ -183,6 +195,7 @@ function spawnClaudeSession(
           if (done) {
             break;
           }
+          state.lastOutputTime = Date.now();
           const text = new TextDecoder().decode(value);
           logger.debug(agent, text.trim());
         }
@@ -250,6 +263,7 @@ function ensureAgentState(agentId: string): AgentState {
       triggerCount: 0,
       lastExitCode: null,
       lastActiveStart: null,
+      lastOutputTime: null,
     };
   }
   return agentState[agentId];
@@ -277,6 +291,47 @@ function isProcessAlive(state: AgentState): boolean {
   }
 
   return true;
+}
+
+/**
+ * Kill a stale process and clean up agent state.
+ */
+function killStaleProcess(
+  agent: string,
+  state: AgentState,
+  reason: "inactivity" | "max_duration"
+): void {
+  const proc = state.activeProcess;
+  if (!proc) {
+    return;
+  }
+
+  try {
+    proc.kill();
+  } catch {
+    // Process already dead
+  }
+
+  state.activeProcess = null;
+  state.lastExitCode = -1;
+  state.lastActiveStart = null;
+  state.lastOutputTime = null;
+
+  // Clear orchestrator concurrency guard if applicable
+  if (agent === "orchestrator") {
+    activeOrchestratorProcess = null;
+  }
+
+  logger.warn("Dispatcher", `Watchdog killed ${agent} (${reason})`);
+
+  if (broadcast) {
+    broadcast("agent_session_ended", {
+      agent,
+      exitCode: -1,
+      reason: `watchdog_${reason}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
 }
 
 // Track dispatcher state
@@ -390,6 +445,7 @@ function triggerAgent(
   const state = ensureAgentState(agent);
   state.lastTriggerTime = Date.now();
   state.lastActiveStart = Date.now();
+  state.lastOutputTime = Date.now();
   state.triggerCount++;
 
   // Broadcast trigger event
@@ -455,9 +511,13 @@ function triggerAgent(
     }
 
     spawnClaudeSession(agent, sessionId, prompt, (exitCode) => {
+      if (state.activeProcess === null) {
+        return; // Watchdog already cleaned up
+      }
       state.activeProcess = null;
       state.lastExitCode = exitCode;
       state.lastActiveStart = null;
+      state.lastOutputTime = null;
 
       logger.info("Dispatcher", `${agent} session ended`, { exitCode });
 
@@ -494,10 +554,45 @@ function triggerAgent(
  * Called every poll cycle to ensure exited processes are cleaned up promptly.
  */
 function reapStaleProcesses(): void {
+  const now = Date.now();
   for (const agent of getDispatchableAgentIds()) {
     const state = agentState[agent];
-    if (state) {
-      isProcessAlive(state);
+    if (!state) {
+      continue;
+    }
+
+    // Check if process already exited synchronously (existing behavior)
+    if (!isProcessAlive(state)) {
+      continue;
+    }
+
+    // Max session duration exceeded
+    if (
+      state.lastActiveStart !== null &&
+      now - state.lastActiveStart > MAX_SESSION_DURATION_MS
+    ) {
+      logger.warn("Dispatcher", `${agent}: max session duration exceeded`, {
+        durationMs: now - state.lastActiveStart,
+        maxMs: MAX_SESSION_DURATION_MS,
+      });
+      killStaleProcess(agent, state, "max_duration");
+      continue;
+    }
+
+    // No output activity for too long
+    if (
+      state.lastOutputTime !== null &&
+      now - state.lastOutputTime > WATCHDOG_INACTIVITY_MS
+    ) {
+      logger.warn(
+        "Dispatcher",
+        `${agent}: no output for ${Math.round((now - state.lastOutputTime) / 1000)}s`,
+        {
+          inactivityMs: now - state.lastOutputTime,
+          thresholdMs: WATCHDOG_INACTIVITY_MS,
+        }
+      );
+      killStaleProcess(agent, state, "inactivity");
     }
   }
 }
@@ -584,6 +679,8 @@ export function initDispatcher(
   logger.info("Dispatcher", "Initialized", {
     pollInterval: POLL_INTERVAL,
     cooldown: COOLDOWN,
+    watchdogInactivity: WATCHDOG_INACTIVITY_MS,
+    maxSessionDuration: MAX_SESSION_DURATION_MS,
   });
 
   // Start polling
@@ -594,6 +691,8 @@ export function initDispatcher(
     enabled: true,
     pollInterval: POLL_INTERVAL,
     cooldown: COOLDOWN,
+    watchdogInactivity: WATCHDOG_INACTIVITY_MS,
+    maxSessionDuration: MAX_SESSION_DURATION_MS,
   });
 
   return true;
@@ -633,6 +732,7 @@ export function getDispatcherStatus(): {
       health: HealthStatus;
       lastExitCode: number | null;
       activeForMs: number | null;
+      lastOutputMs: number | null;
       cooldownRemainingMs: number | null;
     }
   >;
@@ -647,6 +747,7 @@ export function getDispatcherStatus(): {
       health: HealthStatus;
       lastExitCode: number | null;
       activeForMs: number | null;
+      lastOutputMs: number | null;
       cooldownRemainingMs: number | null;
     }
   > = {};
@@ -671,6 +772,8 @@ export function getDispatcherStatus(): {
       lastExitCode: state.lastExitCode,
       activeForMs:
         state.lastActiveStart !== null ? now - state.lastActiveStart : null,
+      lastOutputMs:
+        state.lastOutputTime !== null ? now - state.lastOutputTime : null,
       cooldownRemainingMs: cooldownRemaining > 0 ? cooldownRemaining : null,
     };
   }
@@ -713,7 +816,10 @@ export function manualTrigger(
  * Refresh an agent's session by deleting old sessions and creating a fresh one.
  * This forces a clean context on the next trigger.
  */
-export function refreshAgentSession(agent: string): {
+export function refreshAgentSession(
+  agent: string,
+  force = false
+): {
   success: boolean;
   error?: string;
   oldSessionId?: string;
@@ -726,10 +832,15 @@ export function refreshAgentSession(agent: string): {
   const state = ensureAgentState(agent);
 
   if (isProcessAlive(state)) {
-    return {
-      success: false,
-      error: `${agent} has an active session — cannot refresh while running`,
-    };
+    if (force) {
+      logger.warn("Dispatcher", `Force-killing ${agent} for session refresh`);
+      killStaleProcess(agent, state, "inactivity");
+    } else {
+      return {
+        success: false,
+        error: `${agent} has an active session — cannot refresh while running (use force=true to kill)`,
+      };
+    }
   }
 
   // Capture old session ID
@@ -806,6 +917,7 @@ export function triggerAgentForChannel(
 
   state.lastTriggerTime = Date.now();
   state.lastActiveStart = Date.now();
+  state.lastOutputTime = Date.now();
   state.triggerCount++;
 
   // Broadcast trigger event
@@ -840,9 +952,13 @@ export function triggerAgentForChannel(
 Remember: Use channel_write to respond in the channel, NOT message_send (that's for DMs).`;
 
     spawnClaudeSession(agent, sessionId, prompt, (exitCode) => {
+      if (state.activeProcess === null) {
+        return; // Watchdog already cleaned up
+      }
       state.activeProcess = null;
       state.lastExitCode = exitCode;
       state.lastActiveStart = null;
+      state.lastOutputTime = null;
 
       logger.info("Dispatcher", `${agent} channel session ended`, {
         exitCode,
@@ -979,6 +1095,7 @@ function triggerAgentForStandup(
 
   state.lastTriggerTime = Date.now();
   state.lastActiveStart = Date.now();
+  state.lastOutputTime = Date.now();
   state.triggerCount++;
 
   if (broadcast) {
@@ -1008,9 +1125,13 @@ function triggerAgentForStandup(
       `A standup has been requested in #${channel} for ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}. Please provide your daily update using the /respond-standup skill. Read the channel first to see any previous updates from teammates.`;
 
     spawnClaudeSession(agent, sessionId, prompt, (exitCode) => {
+      if (state.activeProcess === null) {
+        return; // Watchdog already cleaned up
+      }
       state.activeProcess = null;
       state.lastExitCode = exitCode;
       state.lastActiveStart = null;
+      state.lastOutputTime = null;
 
       logger.info("Dispatcher", `${agent} standup session ended`, {
         exitCode,
@@ -1172,6 +1293,11 @@ export function triggerOrchestrator(
     startedAt: new Date().toISOString(),
   };
 
+  // Initialize watchdog state for orchestrator
+  const orchState = ensureAgentState("orchestrator");
+  orchState.lastActiveStart = Date.now();
+  orchState.lastOutputTime = Date.now();
+
   if (broadcast) {
     broadcast("orchestrator_started", {
       sessionId,
@@ -1189,14 +1315,20 @@ export function triggerOrchestrator(
       sessionId,
       prompt,
       (exitCode) => {
+        // Guard: if watchdog already cleaned up, skip duplicate cleanup
+        const orchState = ensureAgentState("orchestrator");
+        if (orchState.activeProcess === null) {
+          return;
+        }
+
         const ended = activeOrchestratorProcess;
         activeOrchestratorProcess = null;
 
         // Clean up agent-level state so dashboard sees Idle
-        const orchState = ensureAgentState("orchestrator");
         orchState.activeProcess = null;
         orchState.lastExitCode = exitCode;
         orchState.lastActiveStart = null;
+        orchState.lastOutputTime = null;
 
         logger.info("Dispatcher", `Orchestrator ${command} session ended`, {
           sessionId,

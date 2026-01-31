@@ -621,9 +621,11 @@ function runHttpServer() {
     return c.json(result);
   });
 
-  app.post("/api/dispatcher/refresh/:agent", (c) => {
+  app.post("/api/dispatcher/refresh/:agent", async (c) => {
     const agent = c.req.param("agent");
-    const result = refreshAgentSession(agent);
+    const body = await c.req.json().catch(() => ({}));
+    const force = (body as { force?: boolean }).force === true;
+    const result = refreshAgentSession(agent, force);
     if (!result.success) {
       return c.json(result, 400);
     }
