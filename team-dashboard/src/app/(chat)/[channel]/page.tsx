@@ -27,5 +27,24 @@ export default async function ChannelPage({ params }: ChannelPageProps) {
     notFound();
   }
 
-  return <ChatArea channel={channel} title={`# ${channel}`} />;
+  // Fetch channel display name from the channels list
+  let title = `# ${channel}`;
+  try {
+    const channelsRes = await fetch(`${TEAM_SERVER_URL}/api/channels`, {
+      cache: "no-store",
+    });
+    if (channelsRes.ok) {
+      const { channels } = await channelsRes.json();
+      const match = channels.find(
+        (ch: { id: string; name: string }) => ch.id === channel
+      );
+      if (match) {
+        title = `# ${match.name}`;
+      }
+    }
+  } catch {
+    // Fall back to slug-based title
+  }
+
+  return <ChatArea channel={channel} title={title} />;
 }

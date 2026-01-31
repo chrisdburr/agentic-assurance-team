@@ -1039,7 +1039,18 @@ function runHttpServer() {
     }
 
     const members = getChannelMembers(channelId);
-    return c.json({ channel_id: channelId, members });
+    // Enrich members with display names
+    const enrichedMembers = members.map((m) => {
+      let display_name = m.member_id;
+      if (m.member_type === "user") {
+        const user = getUserById(m.member_id);
+        if (user) {
+          display_name = user.username;
+        }
+      }
+      return { ...m, display_name };
+    });
+    return c.json({ channel_id: channelId, members: enrichedMembers });
   });
 
   // Add/remove channel members (owner/admin only)

@@ -241,7 +241,9 @@ export function ChannelManageDialog({
                       key={`${member.member_type}-${member.member_id}`}
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-sm">{member.member_id}</span>
+                        <span className="text-sm">
+                          {member.display_name || member.member_id}
+                        </span>
                         {getRoleBadge(member)}
                       </div>
                       <div className="flex items-center gap-1">

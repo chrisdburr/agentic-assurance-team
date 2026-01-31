@@ -307,6 +307,7 @@ export interface ChannelMember {
   channel_id: string;
   member_type: "user" | "agent";
   member_id: string;
+  display_name?: string;
   role: "owner" | "admin" | "member";
   joined_at: string;
 }
