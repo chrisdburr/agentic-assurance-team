@@ -88,12 +88,23 @@ Approve to create issues and notify agents?
 
 ## Step 5: Trigger First Wave
 
-For each subtask with no unresolved dependencies, post to #team:
-```
-@<agent> New task assigned: <title> (<issue-id>)
-Context: <1-sentence summary of what to do>
-Run `/plan-issue <issue-id>` to review and start.
-```
+For each subtask with no unresolved dependencies:
+
+1. **DM the assigned agent** using `message_send`:
+   - To: `<agent>` (e.g. "alice")
+   - Content:
+     ```
+     New task assigned: <title> (<issue-id>)
+     Context: <1-sentence summary of what to do>
+     Run `/plan-issue <issue-id>` to review and start.
+     Post your results to #<originating-channel> (the channel this epic was created from).
+     When complete, close the issue with `bd close <issue-id>` and message me back.
+     ```
+
+2. **Post a dispatch summary** to the channel using `channel_write`:
+   ```
+   Dispatched <N> tasks to agents via DM: <agent1>, <agent2>, ...
+   ```
 
 ## Step 6: Summary
 
@@ -102,7 +113,7 @@ Output the final summary:
 ## Epic Created: <title> (<epic-id>)
 
 Created <N> subtasks, <M> dependencies.
-First wave (<K> tasks) notified via #team.
+First wave (<K> tasks) dispatched via DM.
 
 To check progress: `/orchestrate:status <epic-id>`
 ```

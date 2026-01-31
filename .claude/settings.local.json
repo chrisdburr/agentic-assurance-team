@@ -35,7 +35,12 @@
       "Bash(bun tsc:*)",
       "Bash(bun run lint:*)",
       "Bash(bun run build:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(bunx biome check:*)",
+      "Bash(sqlite3:*)",
+      "Bash(bunx tsc:*)",
+      "Bash(timeout 5 bun run:*)",
+      "Bash(git status:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

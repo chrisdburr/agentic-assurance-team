@@ -403,6 +403,30 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
     }
   }, [lastMessage, mutate, scrollToBottom]);
 
+  // Auto-scroll when system messages are added
+  useEffect(() => {
+    if (systemMessages.length > 0 && isNearBottomRef.current) {
+      setTimeout(() => scrollToBottom(), 50);
+    }
+  }, [systemMessages.length, scrollToBottom]);
+
+  // Auto-dismiss system messages after 15 seconds
+  useEffect(() => {
+    if (systemMessages.length === 0) {
+      return;
+    }
+
+    const timers = systemMessages.map((msg) => {
+      const age = Date.now() - new Date(msg.timestamp).getTime();
+      const remaining = Math.max(0, 15_000 - age);
+      return setTimeout(() => {
+        setSystemMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      }, remaining);
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, [systemMessages]);
+
   return (
     <div className="flex h-full flex-1 flex-col">
       <div className="border-b px-6 py-3">
