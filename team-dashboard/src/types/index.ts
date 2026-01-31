@@ -145,20 +145,6 @@ export interface UpdateAgentInput {
   allowed_tools?: string[];
 }
 
-// Inline system message for slash command feedback
-export interface SystemMessage {
-  id: string;
-  kind: "system";
-  content: string;
-  timestamp: string;
-  fading?: boolean;
-}
-
-// Unified timeline item for rendering the chat scroll area
-export type TimelineItem =
-  | { kind: "message"; data: DisplayMessage }
-  | { kind: "system"; data: SystemMessage };
-
 // Session event from agent conversation logs
 export interface SessionEvent {
   timestamp: string;

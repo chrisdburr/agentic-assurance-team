@@ -131,6 +131,8 @@ Dashboard uses NextAuth with credentials provider, validating against team-serve
 - **Biome** for linting/formatting (extends ultracite/biome/core)
 - **TypeScript** throughout, ES modules
 - **shadcn/ui** components with Base UI primitives in dashboard
+  - Always add new components via `bunx --bun shadcn@latest add <component>` (from `team-dashboard/`)
+  - Never install shadcn component packages directly with `bun add`
 - **Tailwind CSS v4** in dashboard
 - Channel messages stored in `.agents/channels/{channel}.jsonl`
 - DM messages stored in SQLite `messages` table

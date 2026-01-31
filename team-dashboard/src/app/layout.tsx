@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AssistantModal, AssistantProvider } from "@/components/assistant";
 import { SessionProvider } from "@/components/providers/session-provider";
-import { AssistantProvider, AssistantModal } from "@/components/assistant";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,7 +34,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html className="dark" lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
@@ -43,6 +44,7 @@ export default function RootLayout({
             <AssistantModal />
           </AssistantProvider>
         </SessionProvider>
+        <Toaster position="bottom-right" />
       </body>
     </html>
   );
