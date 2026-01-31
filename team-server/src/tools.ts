@@ -666,17 +666,20 @@ export async function handleToolCall(
           header +
           `You are being asked a question by ${callerAgent}. Please respond directly and concisely.\n\nQuestion: ${question}`;
 
-        const proc = Bun.spawn(["claude", "-r", sessionId, prompt, "-p"], {
-          cwd: PROJECT_ROOT,
-          stdout: "pipe",
-          stderr: "pipe",
-          env: {
-            ...process.env,
-            AGENT_ID: agent,
-            ASK_DEPTH: String(currentDepth + 1),
-            ASK_CALLER_CHAIN: newCallerChain,
-          },
-        });
+        const proc = Bun.spawn(
+          ["claude", "--agent", agent, "-r", sessionId, prompt, "-p"],
+          {
+            cwd: PROJECT_ROOT,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: {
+              ...process.env,
+              AGENT_ID: agent,
+              ASK_DEPTH: String(currentDepth + 1),
+              ASK_CALLER_CHAIN: newCallerChain,
+            },
+          }
+        );
 
         // Wait for completion with timeout
         const timeoutPromise = new Promise<never>((_, reject) => {

@@ -134,7 +134,7 @@ function spawnClaudeSession(
   // "create" mode: skip resume attempt, go straight to --session-id
   if (mode === "create") {
     const proc = Bun.spawn(
-      ["claude", "--session-id", sessionId, prompt, "-p"],
+      ["claude", "--agent", agent, "--session-id", sessionId, prompt, "-p"],
       { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe", env: spawnEnv }
     );
     state.activeProcess = proc;
@@ -154,12 +154,15 @@ function spawnClaudeSession(
   }
 
   // "resume" mode: try -r first, fall back to --session-id if not found
-  const proc = Bun.spawn(["claude", "-r", sessionId, prompt, "-p"], {
-    cwd: PROJECT_ROOT,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: spawnEnv,
-  });
+  const proc = Bun.spawn(
+    ["claude", "--agent", agent, "-r", sessionId, prompt, "-p"],
+    {
+      cwd: PROJECT_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    }
+  );
 
   state.activeProcess = proc;
 
@@ -220,7 +223,7 @@ function spawnClaudeSession(
 
         // Retry with --session-id to create the session
         const retryProc = Bun.spawn(
-          ["claude", "--session-id", sessionId, prompt, "-p"],
+          ["claude", "--agent", agent, "--session-id", sessionId, prompt, "-p"],
           { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe", env: spawnEnv }
         );
         state.activeProcess = retryProc;
