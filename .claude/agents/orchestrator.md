@@ -138,11 +138,11 @@ Next: <what needs to happen next>
 ```
 
 ### Advancing blocked work
-When a dependency resolves, DM the unblocked agent using `message_send` with metadata `{"reply_to_channel": "general"}`:
+When a dependency resolves, DM the unblocked agent using `message_send` with metadata `{"reply_to_channel": "<channel>"}` (use the channel from your dispatch context or the originating epic's channel):
 ```
 Dependency resolved — you can now start: <title> (<issue-id>)
 Run `/plan-issue <issue-id>` to review and begin.
-Post your work output to #general using channel_write for team visibility.
+Post your work output to #<channel> using channel_write for team visibility.
 When complete, close the issue with `bd close <issue-id>` and message me back.
 ```
 Then post to the dispatch channel: `Unblocked: <title> (<issue-id>) — notified <agent> via DM`
@@ -154,11 +154,11 @@ When triggered by the dispatcher (not by a slash command), you are reacting to a
 1. **Read messages**: Call `message_list` with `unread_only=true` to see what agents sent you
 2. **Verify completions**: For each task mentioned as complete, run `bd show <issue-id>` to confirm it's closed
 3. **Check for unblocked work**: Run `bd blocked` to see if any tasks are now unblocked
-4. **Advance the pipeline**: For each newly-unblocked task, DM the assigned agent via `message_send` with metadata `{"reply_to_channel": "general"}`:
+4. **Advance the pipeline**: For each newly-unblocked task, DM the assigned agent via `message_send` with metadata `{"reply_to_channel": "<channel>"}` (use the channel from your dispatch context or the originating epic's channel):
    ```
    Dependency resolved — you can now start: <title> (<issue-id>)
    Run `/plan-issue <issue-id>` to review and begin.
-   Post your work output to #general using channel_write for team visibility.
+   Post your work output to #<channel> using channel_write for team visibility.
    When complete, close the issue with `bd close <issue-id>` and message me back.
    ```
 5. **Post progress**: Write a summary to the originating channel via `channel_write`

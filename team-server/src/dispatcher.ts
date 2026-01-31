@@ -475,6 +475,9 @@ function triggerAgent(
     let prompt: string;
 
     if (agent === "orchestrator") {
+      // Extract channel routing from message metadata (same as non-orchestrator path)
+      const channel = extractChannelRouting(messages) || "general";
+
       prompt =
         header +
         "You have new messages from agents reporting task completions or requesting coordination. Do this:\n" +
@@ -482,12 +485,12 @@ function triggerAgent(
         "2. For each completed task mentioned, verify it's closed: run `bd show <issue-id>`\n" +
         "3. Check if any blocked tasks are now unblocked: run `bd blocked`\n" +
         "4. For each newly-unblocked task, DM the assigned agent via message_send\n" +
-        '   with metadata {"reply_to_channel": "general"}:\n' +
+        `   with metadata {"reply_to_channel": "${channel}"}:\n` +
         '   "Dependency resolved — you can now start: <title> (<issue-id>)\n' +
         "    Run `/plan-issue <issue-id>` to review and begin.\n" +
-        "    Post your work output to #general using channel_write for team visibility.\n" +
+        `    Post your work output to #${channel} using channel_write for team visibility.\n` +
         '    When complete, close the issue with `bd close <issue-id>` and message me back."\n' +
-        "5. Post a progress update to the #general channel via channel_write summarizing what advanced\n" +
+        `5. Post a progress update to the #${channel} channel via channel_write summarizing what advanced\n` +
         "6. Mark all processed messages as read via message_mark_read\n" +
         "7. Reply to each sender via message_send acknowledging their completion";
     } else {
