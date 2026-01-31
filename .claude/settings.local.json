@@ -40,7 +40,8 @@
       "Bash(sqlite3:*)",
       "Bash(bunx tsc:*)",
       "Bash(timeout 5 bun run:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(bun add:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
