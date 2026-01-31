@@ -5,10 +5,15 @@ node_modules/
 dist/
 build/
 
-# Team database (generated, contains runtime data)
+# Team database and state (generated, contains runtime data)
 .agents/team.db
 .agents/team.db-wal
 .agents/team.db-shm
+.agents/state.db
+
+# Nested .agents directories (runtime artifacts in subprojects)
+team-dashboard/.agents/
+team-server/.agents/
 
 # Memory server data (per-session knowledge graph)
 .agents/memory/
@@ -55,5 +60,8 @@ projects/notes/*/
 !projects/apps/.gitkeep
 !projects/papers/.gitkeep
 !projects/notes/.gitkeep
+# Beads export state (transient)
+.beads/export-state/
+
 # next-agents-md
 .next-docs/
