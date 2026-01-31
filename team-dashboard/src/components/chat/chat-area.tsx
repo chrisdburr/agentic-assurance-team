@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useWebSocket } from "@/hooks/use-websocket";
 import {
   checkOrchestrationStatus,
   fetchChannelMessages,
@@ -14,7 +15,13 @@ import {
   startStandup,
 } from "@/lib/api";
 import { filterRecentMessages } from "@/lib/message-utils";
-import type { ChannelMessage, DisplayMessage, Message } from "@/types";
+import type {
+  ChannelMessage,
+  DisplayMessage,
+  Message,
+  SystemMessage,
+  TimelineItem,
+} from "@/types";
 import {
   type CommandResult,
   MessageInput,
@@ -22,7 +29,6 @@ import {
 } from "./message-input";
 import { MessageList } from "./message-list";
 import { ScrollToTopButton } from "./scroll-to-top-button";
-import { SystemMessageItem } from "./system-message-item";
 import { TypingIndicator } from "./typing-indicator";
 
 // Convert DM Message to DisplayMessage
@@ -49,14 +55,14 @@ function normalizeChannelMessage(m: ChannelMessage): DisplayMessage {
   };
 }
 
-import { useWebSocket } from "@/hooks/use-websocket";
-
-// System message type for slash command results
-interface SystemMessage {
-  id: string;
-  type: "system";
-  content: string;
-  timestamp: string;
+function statusEmoji(status: string): string {
+  if (status === "active") {
+    return "🟢";
+  }
+  if (status === "idle") {
+    return "🟡";
+  }
+  return "⚫";
 }
 
 const LOAD_MORE_BATCH = 20;
@@ -65,6 +71,149 @@ interface ChatAreaProps {
   channel?: string;
   agent?: string;
   title: string;
+}
+
+interface SystemMessageHelpers {
+  create: (id: string, content: string) => void;
+  update: (id: string, content: string) => void;
+}
+
+// Individual command handlers extracted for lint complexity
+function handleHelpCommand(sys: SystemMessageHelpers): CommandResult {
+  sys.create(
+    `sys-help-${Date.now()}`,
+    "**Available Commands:**\n" +
+      "- `/help` - Show this help message\n" +
+      "- `/status` - Show team member status\n" +
+      "- `/standup` - Start a standup session (Alice → Bob → Charlie)\n" +
+      "- `/orchestrate:decompose <task>` - Decompose a task into issues\n" +
+      "- `/orchestrate:status <epic-id>` - Check progress on an epic"
+  );
+  return { command: "help", success: true, message: "Help displayed" };
+}
+
+async function handleStatusCommand(
+  sys: SystemMessageHelpers
+): Promise<CommandResult> {
+  const { team } = await fetchTeamStatus();
+  if (team.length === 0) {
+    sys.create(
+      `sys-status-${Date.now()}`,
+      "**Team Status:** No status updates available."
+    );
+  } else {
+    const statusLines = team.map((s) => {
+      const emoji = statusEmoji(s.status);
+      const working = s.working_on ? ` - ${s.working_on}` : "";
+      return `${emoji} **${s.agent_id}**: ${s.status}${working}`;
+    });
+    sys.create(
+      `sys-status-${Date.now()}`,
+      `**Team Status:**\n${statusLines.join("\n")}`
+    );
+  }
+  return { command: "status", success: true, message: "Status displayed" };
+}
+
+async function handleStandupCommand(
+  sys: SystemMessageHelpers,
+  target: string
+): Promise<CommandResult> {
+  const msgId = `sys-standup-${Date.now()}`;
+  sys.create(
+    msgId,
+    "**Starting standup session...** Each agent will respond in sequence. Watch the channel for updates."
+  );
+  const result = await startStandup(target);
+  if (result.success) {
+    sys.update(
+      msgId,
+      `**Standup initiated.** Session ID: \`${result.session_id}\`\n\nAgents will post their updates to the channel: Alice, then Bob, then Charlie.`
+    );
+  } else {
+    sys.update(msgId, `**Standup failed:** ${result.error || "Unknown error"}`);
+  }
+  return { command: "standup", success: true, message: "Standup initiated" };
+}
+
+async function handleDecomposeCommand(
+  sys: SystemMessageHelpers,
+  target: string,
+  args?: string
+): Promise<CommandResult> {
+  if (!args) {
+    sys.create(
+      `sys-decompose-${Date.now()}`,
+      "**Usage:** `/orchestrate:decompose <task description>`\n\nExample: `/orchestrate:decompose Build a calibration pipeline for sensor data`"
+    );
+    return {
+      command: "orchestrate:decompose",
+      success: false,
+      message: "Missing task argument",
+    };
+  }
+  const msgId = `sys-decompose-${Date.now()}`;
+  sys.create(
+    msgId,
+    "**Starting task decomposition...** The orchestrator will break down your task and post results to the channel."
+  );
+  const result = await startDecomposition(args, target);
+  if (result.success) {
+    sys.update(
+      msgId,
+      `**Decomposition started.** Session ID: \`${result.session_id}\`\n\nThe orchestrator will create an epic with subtasks and post updates to #${result.channel || target}.`
+    );
+  } else {
+    sys.update(
+      msgId,
+      `**Decomposition failed:** ${result.error || "Unknown error"}`
+    );
+  }
+  return {
+    command: "orchestrate:decompose",
+    success: true,
+    message: "Decomposition initiated",
+  };
+}
+
+async function handleOrchestrationStatusCommand(
+  sys: SystemMessageHelpers,
+  target: string,
+  args?: string
+): Promise<CommandResult> {
+  if (!args) {
+    sys.create(
+      `sys-orchstatus-${Date.now()}`,
+      "**Usage:** `/orchestrate:status <epic-id>`\n\nExample: `/orchestrate:status team-abc123`"
+    );
+    return {
+      command: "orchestrate:status",
+      success: false,
+      message: "Missing epic ID argument",
+    };
+  }
+  const msgId = `sys-orchstatus-${Date.now()}`;
+  sys.create(
+    msgId,
+    `**Checking epic progress...** The orchestrator will review the status of \`${args}\` and post results to the channel.`
+  );
+  const result = await checkOrchestrationStatus(args, target);
+  if (result.success) {
+    sys.update(
+      msgId,
+      `**Status check started.** Session ID: \`${result.session_id}\`\n\nThe orchestrator will post a progress report to #${result.channel || target}.`
+    );
+  } else {
+    sys.update(
+      msgId,
+      `**Status check failed:** ${result.error || "Unknown error"}`
+    );
+  }
+  return {
+    command: "orchestrate:status",
+    success: true,
+    message: "Status check initiated",
+  };
 }
 
 async function fetcher(key: string): Promise<DisplayMessage[]> {
@@ -84,8 +233,10 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   // State for showing older messages
   const [showOlderCount, setShowOlderCount] = useState(0);
 
-  // State for system messages (slash command results)
-  const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
+  // State for system messages (slash command results) — Map for O(1) update-in-place
+  const [systemMessages, setSystemMessages] = useState<
+    Map<string, SystemMessage>
+  >(new Map());
 
   // Subscribe to WebSocket events
   const { lastMessage, isConnected, activeAgents } = useWebSocket();
@@ -110,12 +261,34 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
       : showOlderCount;
 
   // Get visible older messages (from the end, most recent of the older)
-  const visibleOlder =
-    effectiveShowOlderCount > 0 ? older.slice(-effectiveShowOlderCount) : [];
-  const visibleMessages = [...visibleOlder, ...recent];
+  const visibleMessages = useMemo(() => {
+    const visibleOlder =
+      effectiveShowOlderCount > 0 ? older.slice(-effectiveShowOlderCount) : [];
+    return [...visibleOlder, ...recent];
+  }, [older, recent, effectiveShowOlderCount]);
 
   // Remaining older messages not yet loaded
   const remainingOlderCount = older.length - effectiveShowOlderCount;
+
+  // Build merged timeline: interleave regular messages and system messages chronologically
+  const timeline: TimelineItem[] = useMemo(() => {
+    const items: TimelineItem[] = visibleMessages.map((m) => ({
+      kind: "message" as const,
+      data: m,
+    }));
+
+    for (const sysMsg of systemMessages.values()) {
+      items.push({ kind: "system" as const, data: sysMsg });
+    }
+
+    items.sort(
+      (a, b) =>
+        new Date(a.data.timestamp).getTime() -
+        new Date(b.data.timestamp).getTime()
+    );
+
+    return items;
+  }, [visibleMessages, systemMessages]);
 
   // Scroll management
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -145,9 +318,10 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   }, [getViewport]);
 
   // Reset older messages count and system messages when changing chats
+  // biome-ignore lint/correctness/useExhaustiveDependencies: key is intentionally used to reset state when switching conversations
   useEffect(() => {
     setShowOlderCount(0);
-    setSystemMessages([]);
+    setSystemMessages(new Map());
     isInitialLoad.current = true;
   }, [key]);
 
@@ -166,6 +340,7 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
   }, [visibleMessages.length, scrollToBottom]);
 
   // Track scroll position for scroll-to-top button and auto-scroll
+  // biome-ignore lint/correctness/useExhaustiveDependencies: key is intentionally used to re-attach scroll listener when switching conversations
   useEffect(() => {
     const viewport = getViewport();
     if (!viewport) {
@@ -247,132 +422,51 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
     [target, channel, messages, mutate, scrollToBottom]
   );
 
-  // Handle slash commands
-  const handleCommand = useCallback(
-    async (command: SlashCommand, args?: string): Promise<CommandResult> => {
-      const addSystemMessage = (content: string) => {
+  // System message helpers for create and update-in-place
+  const sysHelpers: SystemMessageHelpers = useMemo(
+    () => ({
+      create: (id: string, content: string) => {
         const sysMsg: SystemMessage = {
-          id: `sys-${Date.now()}`,
-          type: "system",
+          id,
+          kind: "system",
           content,
           timestamp: new Date().toISOString(),
         };
-        setSystemMessages((prev) => [...prev, sysMsg]);
-      };
+        setSystemMessages((prev) => new Map(prev).set(id, sysMsg));
+      },
+      update: (id: string, content: string) => {
+        setSystemMessages((prev) => {
+          const next = new Map(prev);
+          const existing = next.get(id);
+          if (existing) {
+            next.set(id, { ...existing, content });
+          }
+          return next;
+        });
+      },
+    }),
+    []
+  );
 
+  // Handle slash commands — dispatches to extracted handler functions
+  const handleCommand = useCallback(
+    async (command: SlashCommand, args?: string): Promise<CommandResult> => {
       try {
         switch (command) {
-          case "help": {
-            addSystemMessage(
-              "**Available Commands:**\n" +
-                "- `/help` - Show this help message\n" +
-                "- `/status` - Show team member status\n" +
-                "- `/standup` - Start a standup session (Alice → Bob → Charlie)\n" +
-                "- `/orchestrate:decompose <task>` - Decompose a task into issues\n" +
-                "- `/orchestrate:status <epic-id>` - Check progress on an epic"
+          case "help":
+            return await handleHelpCommand(sysHelpers);
+          case "status":
+            return await handleStatusCommand(sysHelpers);
+          case "standup":
+            return await handleStandupCommand(sysHelpers, target);
+          case "orchestrate:decompose":
+            return await handleDecomposeCommand(sysHelpers, target, args);
+          case "orchestrate:status":
+            return await handleOrchestrationStatusCommand(
+              sysHelpers,
+              target,
+              args
             );
-            return { command, success: true, message: "Help displayed" };
-          }
-
-          case "status": {
-            const { team } = await fetchTeamStatus();
-            if (team.length === 0) {
-              addSystemMessage("**Team Status:** No status updates available.");
-            } else {
-              const statusLines = team.map((s) => {
-                const status =
-                  s.status === "active"
-                    ? "🟢"
-                    : s.status === "idle"
-                      ? "🟡"
-                      : "⚫";
-                const working = s.working_on ? ` - ${s.working_on}` : "";
-                return `${status} **${s.agent_id}**: ${s.status}${working}`;
-              });
-              addSystemMessage("**Team Status:**\n" + statusLines.join("\n"));
-            }
-            return { command, success: true, message: "Status displayed" };
-          }
-
-          case "standup": {
-            addSystemMessage(
-              "**Starting standup session...** Each agent will respond in sequence. Watch the channel for updates."
-            );
-            const result = await startStandup(target);
-            if (result.success) {
-              addSystemMessage(
-                `**Standup initiated.** Session ID: \`${result.session_id}\`\n\nAgents will post their updates to the channel: Alice, then Bob, then Charlie.`
-              );
-            } else {
-              addSystemMessage(
-                `**Standup failed:** ${result.error || "Unknown error"}`
-              );
-            }
-            return { command, success: true, message: "Standup initiated" };
-          }
-
-          case "orchestrate:decompose": {
-            if (!args) {
-              addSystemMessage(
-                "**Usage:** `/orchestrate:decompose <task description>`\n\nExample: `/orchestrate:decompose Build a calibration pipeline for sensor data`"
-              );
-              return {
-                command,
-                success: false,
-                message: "Missing task argument",
-              };
-            }
-            addSystemMessage(
-              "**Starting task decomposition...** The orchestrator will break down your task and post results to the channel."
-            );
-            const result = await startDecomposition(args, target);
-            if (result.success) {
-              addSystemMessage(
-                `**Decomposition started.** Session ID: \`${result.session_id}\`\n\nThe orchestrator will create an epic with subtasks and post updates to #${result.channel || target}.`
-              );
-            } else {
-              addSystemMessage(
-                `**Decomposition failed:** ${result.error || "Unknown error"}`
-              );
-            }
-            return {
-              command,
-              success: true,
-              message: "Decomposition initiated",
-            };
-          }
-
-          case "orchestrate:status": {
-            if (!args) {
-              addSystemMessage(
-                "**Usage:** `/orchestrate:status <epic-id>`\n\nExample: `/orchestrate:status team-abc123`"
-              );
-              return {
-                command,
-                success: false,
-                message: "Missing epic ID argument",
-              };
-            }
-            addSystemMessage(
-              `**Checking epic progress...** The orchestrator will review the status of \`${args}\` and post results to the channel.`
-            );
-            const result = await checkOrchestrationStatus(args, target);
-            if (result.success) {
-              addSystemMessage(
-                `**Status check started.** Session ID: \`${result.session_id}\`\n\nThe orchestrator will post a progress report to #${result.channel || target}.`
-              );
-            } else {
-              addSystemMessage(
-                `**Status check failed:** ${result.error || "Unknown error"}`
-              );
-            }
-            return {
-              command,
-              success: true,
-              message: "Status check initiated",
-            };
-          }
-
           default:
             return {
               command,
@@ -382,11 +476,11 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : "Command failed";
-        addSystemMessage(`**Error:** ${errorMsg}`);
+        sysHelpers.create(`sys-error-${Date.now()}`, `**Error:** ${errorMsg}`);
         return { command, success: false, message: errorMsg };
       }
     },
-    [target]
+    [sysHelpers, target]
   );
 
   // Refresh when we get a new WebSocket message and auto-scroll if near bottom
@@ -405,27 +499,94 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
 
   // Auto-scroll when system messages are added
   useEffect(() => {
-    if (systemMessages.length > 0 && isNearBottomRef.current) {
+    if (systemMessages.size > 0 && isNearBottomRef.current) {
       setTimeout(() => scrollToBottom(), 50);
     }
-  }, [systemMessages.length, scrollToBottom]);
+  }, [systemMessages.size, scrollToBottom]);
 
-  // Auto-dismiss system messages after 15 seconds
+  // Auto-dismiss system messages: fade at 30s, remove at 30.5s
   useEffect(() => {
-    if (systemMessages.length === 0) {
+    if (systemMessages.size === 0) {
       return;
     }
 
-    const timers = systemMessages.map((msg) => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    for (const msg of systemMessages.values()) {
+      if (msg.fading) {
+        continue;
+      }
+
       const age = Date.now() - new Date(msg.timestamp).getTime();
-      const remaining = Math.max(0, 15_000 - age);
-      return setTimeout(() => {
-        setSystemMessages((prev) => prev.filter((m) => m.id !== msg.id));
-      }, remaining);
-    });
+      const fadeDelay = Math.max(0, 30_000 - age);
+      const removeDelay = fadeDelay + 500;
+
+      // Phase 1: set fading flag to trigger CSS transition
+      timers.push(
+        setTimeout(() => {
+          setSystemMessages((prev) => {
+            const next = new Map(prev);
+            const existing = next.get(msg.id);
+            if (existing) {
+              next.set(msg.id, { ...existing, fading: true });
+            }
+            return next;
+          });
+        }, fadeDelay)
+      );
+
+      // Phase 2: remove from state after CSS transition completes
+      timers.push(
+        setTimeout(() => {
+          setSystemMessages((prev) => {
+            const next = new Map(prev);
+            next.delete(msg.id);
+            return next;
+          });
+        }, removeDelay)
+      );
+    }
 
     return () => timers.forEach(clearTimeout);
   }, [systemMessages]);
+
+  // Scope typing indicator to current conversation
+  const relevantAgents = agent
+    ? activeAgents.filter((a) => a === agent)
+    : activeAgents;
+
+  function renderContent() {
+    if (isLoading) {
+      return (
+        <div className="flex h-32 items-center justify-center">
+          <span className="text-muted-foreground">Loading messages...</span>
+        </div>
+      );
+    }
+
+    if (messages.length === 0 && systemMessages.size === 0) {
+      return (
+        <div className="flex h-32 items-center justify-center">
+          <span className="text-muted-foreground">No messages yet</span>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <MessageList
+          items={timeline}
+          olderMessageCount={remainingOlderCount}
+          onLoadMore={handleLoadMore}
+        />
+        {relevantAgents.length > 0 && (
+          <div className="mt-6">
+            <TypingIndicator agents={relevantAgents} />
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="flex h-full flex-1 flex-col">
@@ -436,42 +597,7 @@ export function ChatArea({ channel, agent, title }: ChatAreaProps) {
       <div className="relative min-h-0 flex-1">
         <ScrollToTopButton onClick={scrollToTop} visible={showScrollToTop} />
         <ScrollArea className="h-full px-6 py-4" ref={scrollRef}>
-          {isLoading ? (
-            <div className="flex h-32 items-center justify-center">
-              <span className="text-muted-foreground">Loading messages...</span>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="flex h-32 items-center justify-center">
-              <span className="text-muted-foreground">No messages yet</span>
-            </div>
-          ) : (
-            <>
-              <MessageList
-                messages={visibleMessages}
-                olderMessageCount={remainingOlderCount}
-                onLoadMore={handleLoadMore}
-              />
-              {systemMessages.map((sysMsg) => (
-                <div className="mt-4" key={sysMsg.id}>
-                  <SystemMessageItem
-                    content={sysMsg.content}
-                    timestamp={sysMsg.timestamp}
-                  />
-                </div>
-              ))}
-              {(() => {
-                // Scope typing indicator to current conversation
-                const relevantAgents = agent
-                  ? activeAgents.filter((a) => a === agent) // DM: only show this agent
-                  : activeAgents; // Channel: show all active agents
-                return relevantAgents.length > 0 ? (
-                  <div className="mt-6">
-                    <TypingIndicator agents={relevantAgents} />
-                  </div>
-                ) : null;
-              })()}
-            </>
-          )}
+          {renderContent()}
         </ScrollArea>
       </div>
 

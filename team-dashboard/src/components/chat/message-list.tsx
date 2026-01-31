@@ -1,17 +1,18 @@
 "use client";
 
-import type { DisplayMessage } from "@/types";
-import { MessageItem } from "./message-item";
+import type { TimelineItem } from "@/types";
 import { LoadMoreButton } from "./load-more-button";
+import { MessageItem } from "./message-item";
+import { SystemMessageItem } from "./system-message-item";
 
 interface MessageListProps {
-  messages: DisplayMessage[];
+  items: TimelineItem[];
   olderMessageCount?: number;
   onLoadMore?: () => void;
 }
 
 export function MessageList({
-  messages,
+  items,
   olderMessageCount = 0,
   onLoadMore,
 }: MessageListProps) {
@@ -20,9 +21,18 @@ export function MessageList({
       {olderMessageCount > 0 && onLoadMore && (
         <LoadMoreButton olderCount={olderMessageCount} onClick={onLoadMore} />
       )}
-      {messages.map((message) => (
-        <MessageItem key={message.id} message={message} />
-      ))}
+      {items.map((item) =>
+        item.kind === "message" ? (
+          <MessageItem key={item.data.id} message={item.data} />
+        ) : (
+          <SystemMessageItem
+            content={item.data.content}
+            fading={item.data.fading}
+            key={item.data.id}
+            timestamp={item.data.timestamp}
+          />
+        )
+      )}
     </div>
   );
 }
