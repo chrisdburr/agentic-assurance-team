@@ -7,6 +7,7 @@ import type {
   Message,
   MessageFilter,
   MonitoringData,
+  ResolvedPreset,
   RosterEntry,
   UpdateAgentInput,
 } from "@/types";
@@ -612,4 +613,14 @@ export async function deleteUserApi(
     throw new Error(error.error || "Failed to delete user");
   }
   return res.json();
+}
+
+// Fetch agent type presets with resolved tool lists
+export async function fetchPresets(): Promise<ResolvedPreset[]> {
+  const res = await fetch(`${API_BASE}/presets`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch presets");
+  }
+  const data = await res.json();
+  return data.presets || [];
 }

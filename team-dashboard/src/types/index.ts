@@ -114,6 +114,7 @@ export interface CreateAgentInput {
   model: string;
   system_prompt: string;
   allowed_tools?: string[];
+  dispatchable?: boolean;
 }
 
 // User from the admin API
@@ -143,6 +144,16 @@ export interface UpdateUserInput {
 // Input for updating an agent
 export interface UpdateAgentInput {
   allowed_tools?: string[];
+}
+
+// Resolved preset from presets.yaml (tool groups flattened)
+export interface ResolvedPreset {
+  id: string;
+  description: string;
+  model: string;
+  dispatchable: boolean;
+  tools: string[];
+  tool_groups: string[];
 }
 
 // Session event from agent conversation logs

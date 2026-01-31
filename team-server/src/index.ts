@@ -71,6 +71,7 @@ import {
   triggerOrchestrator,
 } from "./dispatcher.js";
 import { logger } from "./logger.js";
+import { getResolvedPresets } from "./presets.js";
 import {
   getRecentEventsAcrossAgents,
   listAgentSessions,
@@ -127,7 +128,7 @@ function triggerMentionedAgents(
   }
 }
 
-const WEB_PORT = Number.parseInt(process.env.WEB_PORT || "3030");
+const WEB_PORT = Number.parseInt(process.env.WEB_PORT || "3030", 10);
 const isMcpMode = process.argv.includes("--mcp");
 
 // WebSocket clients for real-time updates
@@ -229,7 +230,7 @@ function runHttpServer() {
 
   // API Routes
   app.get("/api/messages", (c) => {
-    const limit = Number.parseInt(c.req.query("limit") || "100");
+    const limit = Number.parseInt(c.req.query("limit") || "100", 10);
     const toAgent = c.req.query("to_agent");
     const fromAgent = c.req.query("from_agent");
 
@@ -601,7 +602,7 @@ function runHttpServer() {
       }
 
       return c.json({ success: true });
-    } catch (error) {
+    } catch (_error) {
       return c.json({ success: false }, 400);
     }
   });
@@ -1202,6 +1203,18 @@ function runHttpServer() {
     }
   });
 
+  // Presets API
+  app.get("/api/presets", (c) => {
+    try {
+      const presets = getResolvedPresets();
+      return c.json({ presets });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("[Presets] Failed to load presets:", msg);
+      return c.json({ presets: [], error: msg }, 500);
+    }
+  });
+
   // Agent API Routes
 
   // List all agents
@@ -1281,6 +1294,7 @@ function runHttpServer() {
         system_prompt: system_prompt.trim(),
         owner: owner || undefined,
         allowed_tools: body.allowed_tools,
+        dispatchable: body.dispatchable,
       });
 
       // Add the new agent to all existing channels
@@ -1375,7 +1389,7 @@ function runHttpServer() {
   });
 
   // Start Bun server with WebSocket support
-  const server = serve({
+  const _server = serve({
     port: WEB_PORT,
     fetch(req, server) {
       const url = new URL(req.url);

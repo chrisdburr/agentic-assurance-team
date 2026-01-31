@@ -23,12 +23,14 @@ interface ToolPickerProps {
   selectedTools: string[];
   onSelectedToolsChange: (tools: string[]) => void;
   disabled?: boolean;
+  presetTools?: string[];
 }
 
 export function ToolPicker({
   selectedTools,
   onSelectedToolsChange,
   disabled,
+  presetTools,
 }: ToolPickerProps) {
   const [open, setOpen] = useState(false);
 
@@ -96,6 +98,17 @@ export function ToolPicker({
             >
               MCP
             </Button>
+            {presetTools && presetTools.length > 0 && (
+              <Button
+                disabled={disabled}
+                onClick={() => onSelectedToolsChange([...presetTools])}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Preset
+              </Button>
+            )}
             <Button
               disabled={disabled}
               onClick={() => onSelectedToolsChange([])}

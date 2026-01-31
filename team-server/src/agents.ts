@@ -27,6 +27,7 @@ export interface CreateAgentInput {
   system_prompt: string;
   owner?: string;
   allowed_tools?: string[];
+  dispatchable?: boolean;
 }
 
 export interface UpdateAgentInput {
@@ -222,7 +223,7 @@ export function isDispatchableAgent(id: string): boolean {
 
 // Validate agent name for creating new agents
 export function validateAgentName(
-  name: string
+  name: string,
 ): { valid: true } | { valid: false; error: string } {
   // Check format: lowercase letters, numbers, and hyphens
   if (!AGENT_NAME_REGEX.test(name)) {
@@ -275,7 +276,8 @@ export function createAgent(input: CreateAgentInput): Agent {
   if (input.owner) {
     lines.push(`owner: ${input.owner}`);
   }
-  lines.push("dispatchable: true");
+  const dispatchable = input.dispatchable !== false;
+  lines.push(`dispatchable: ${dispatchable}`);
   lines.push("permissionMode: dontAsk");
 
   // Add allowed tools if provided
@@ -304,7 +306,7 @@ export function createAgent(input: CreateAgentInput): Agent {
   const skeleton = generateSkeletonIdentity(
     input.name,
     input.description,
-    input.system_prompt
+    input.system_prompt,
   );
   writeFileSync(identityPath, skeleton, "utf-8");
 
@@ -323,14 +325,14 @@ export function createAgent(input: CreateAgentInput): Agent {
     is_system: false,
     owner: input.owner || null,
     allowed_tools: input.allowed_tools,
-    dispatchable: true,
+    dispatchable,
   };
 }
 
 // Delete an agent by ID (only non-system agents, only by the owner)
 export function deleteAgent(
   id: string,
-  requestingUser: string
+  requestingUser: string,
 ): { success: true } | { success: false; error: string } {
   const agent = getAgentById(id);
   if (!agent) {
@@ -373,7 +375,7 @@ export function deleteAgent(
 export function updateAgent(
   id: string,
   input: UpdateAgentInput,
-  requestingUser: string
+  requestingUser: string,
 ): Agent {
   const agent = getAgentById(id);
   if (!agent) {
@@ -448,7 +450,7 @@ export function updateAgent(
 function generateSkeletonIdentity(
   name: string,
   description: string,
-  _systemPrompt: string
+  _systemPrompt: string,
 ): string {
   const displayName = name.charAt(0).toUpperCase() + name.slice(1);
   // Extract a short role from the description (first clause or sentence)
@@ -492,7 +494,7 @@ Derived from system prompt — see \`.claude/agents/${name}.md\` for full detail
 function enrichIdentityFileAsync(
   name: string,
   description: string,
-  _systemPrompt: string
+  _systemPrompt: string,
 ): void {
   const projectRoot = getProjectRoot();
   const identitiesDir = getIdentitiesDir();
@@ -522,7 +524,7 @@ Start directly with "# ${name.charAt(0).toUpperCase() + name.slice(1)} - " headi
       cwd: projectRoot,
       stdout: "pipe",
       stderr: "pipe",
-    }
+    },
   );
 
   // Fire-and-forget with timeout — overwrite skeleton on success
@@ -562,7 +564,7 @@ function getProjectRoot(): string {
 export async function generateSystemPrompt(
   name: string,
   description: string,
-  model: string
+  model: string,
 ): Promise<string> {
   const projectRoot = getProjectRoot();
 
@@ -593,7 +595,7 @@ Start your response directly with the first line of the system prompt (typically
       cwd: projectRoot,
       stdout: "pipe",
       stderr: "pipe",
-    }
+    },
   );
 
   // Apply 120-second timeout
@@ -608,7 +610,7 @@ Start your response directly with the first line of the system prompt (typically
 
     if (exitCode !== 0) {
       throw new Error(
-        `Claude CLI exited with code ${exitCode}: ${stderr.slice(0, 500)}`
+        `Claude CLI exited with code ${exitCode}: ${stderr.slice(0, 500)}`,
       );
     }
 
